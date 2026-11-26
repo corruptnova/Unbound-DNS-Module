@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Unbound DNS</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Unbound DNS</h1>
+    <span class="muted" id="module-version"></span>
+  </header>
+
+  <main>
+    <section class="card" id="status-card" aria-labelledby="status-title">
+      <div class="row">
+        <h2 id="status-title" class="status-line">
+          <span class="dot" id="status-dot" aria-hidden="true"></span>
+          <span id="status-text">Loading…</span>
+        </h2>
+        <button type="button" class="btn" id="redirect-btn" disabled>…</button>
+      </div>
+      <p class="muted small" id="status-sub"></p>
+      <dl class="stats" id="stats"></dl>
+      <div id="warnings"></div>
+    </section>
+
+    <section class="card" aria-labelledby="lists-title">
+      <div class="row">
+        <h2 id="lists-title">Blocklists</h2>
+        <span class="pill" id="blocked-total">0 domains</span>
+      </div>
+      <ul class="items" id="sources"></ul>
+      <p class="muted small empty" id="sources-empty">No blocklists yet. Add one below; nothing is blocked until you do.</p>
+
+      <form id="add-form" class="stack" autocomplete="off">
+        <label for="preset">Add a list</label>
+        <select id="preset"></select>
+        <div id="custom-fields" class="stack" hidden>
+          <input id="custom-url" type="url" inputmode="url" placeholder="https://example.com/list.txt" aria-label="List URL">
+          <input id="custom-name" type="text" maxlength="48" placeholder="Name (optional)" aria-label="List name">
+        </div>
+        <p class="muted small" id="preset-note"></p>
+        <button type="submit" class="btn primary" id="add-btn">Add list</button>
+      </form>
+
+      <div class="row wrap gap">
+        <button type="button" class="btn" id="update-btn">Update now</button>
+        <label class="inline">Refresh
+          <select id="refresh">
+            <option value="6">every 6 hours</option>
+            <option value="12">every 12 hours</option>
+            <option value="24">daily</option>
+            <option value="48">every 2 days</option>
+            <option value="168">weekly</option>
+          </select>
+        </label>
+      </div>
+      <p class="muted small" id="update-status"></p>
+    </section>
+
+    <section class="card" aria-labelledby="allow-title">
+      <h2 id="allow-title">Allowlist</h2>
+      <p class="muted small">Never blocked, including their subdomains.</p>
+      <ul class="items" id="allow"></ul>
+      <form id="allow-form" class="row gap" autocomplete="off">
+        <input id="allow-input" type="text" inputmode="url" placeholder="example.com" aria-label="Domain to allow" autocapitalize="off" spellcheck="false">
+        <button type="submit" class="btn">Add</button>
+      </form>
+    </section>
+
+    <section class="card" aria-labelledby="log-title">
+      <details id="log-details">
+        <summary><h2 id="log-title">Log</h2></summary>
+        <div class="row gap tabs" role="tablist">
+          <button type="button" class="btn small-btn active" data-log="module" role="tab" aria-selected="true">Module</button>
+          <button type="button" class="btn small-btn" data-log="unbound" role="tab" aria-selected="false">Unbound</button>
+          <button type="button" class="btn small-btn" id="log-refresh">Refresh</button>
+        </div>
+        <pre id="log" class="log" tabindex="0"></pre>
+      </details>
+    </section>
+
+    <p class="muted small footer">Settings and lists: <code>/data/adb/unbound</code></p>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
