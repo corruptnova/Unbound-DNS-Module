@@ -153,8 +153,12 @@ write_options_conf() {
 anchor_json() {
     _rk="$VAR/root.key"
     printf '{"keys":['
+    # Matches both the shipped file (". IN DNSKEY 257 ...", spaces) and the
+    # file Unbound rewrites while tracking keys (tab-separated fields plus
+    # ";;state=" comments).
     [ -f "$_rk" ] && LC_ALL=C awk '
-        /DNSKEY 257/ || /^\. .*DS / {
+        /^;/ { next }
+        /DNSKEY[ \t]+257[ \t]/ || /[ \t]DS[ \t]/ {
             id = ""; state = ""
             if (match($0, /id = [0-9]+/)) id = substr($0, RSTART + 5, RLENGTH - 5)
             else if (match($0, /keytag [0-9]+/)) id = substr($0, RSTART + 7, RLENGTH - 7)

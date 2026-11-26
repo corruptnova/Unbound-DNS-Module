@@ -3,6 +3,12 @@
 Notes for module revisions. Releases list the bundled versions on top of
 these notes.
 
+## v1.26.2-r5
+
+- Settings page: the root trust anchor status reads the file Unbound writes
+  while tracking keys (it showed "No root key found" after the first run).
+- The DNS redirect counts as active only once all its rules are in place.
+
 ## v1.26.2-r4
 
 - My blocklist: block any domain and its subdomains (`*.example.com` works).

@@ -48,7 +48,6 @@ _chains_add() {
     fi
     _ipt "$_i" -w -t nat -A "$NAT_CHAIN" -p udp --dport 53 -j REDIRECT --to-ports "$UB_PORT" || return 1
     _ipt "$_i" -w -t nat -A "$NAT_CHAIN" -p tcp --dport 53 -j REDIRECT --to-ports "$UB_PORT" || return 1
-    _ipt "$_i" -w -t nat -C OUTPUT -j "$NAT_CHAIN" || _ipt "$_i" -w -t nat -I OUTPUT -j "$NAT_CHAIN" || return 1
 
     # Blocking 853 is a hardening extra: never fail the redirect over it.
     if _ipt "$_i" -w -N "$DOT_CHAIN" || _ipt "$_i" -w -F "$DOT_CHAIN"; then
@@ -59,6 +58,9 @@ _chains_add() {
         _ipt "$_i" -w -A "$DOT_CHAIN" -p udp --dport 853 -j REJECT
         _ipt "$_i" -w -C OUTPUT -j "$DOT_CHAIN" || _ipt "$_i" -w -I OUTPUT -j "$DOT_CHAIN"
     fi
+    # The jump into the redirect goes in last: once it exists (what
+    # redirect_active checks), every other rule is already in place.
+    _ipt "$_i" -w -t nat -C OUTPUT -j "$NAT_CHAIN" || _ipt "$_i" -w -t nat -I OUTPUT -j "$NAT_CHAIN" || return 1
     return 0
 }
 

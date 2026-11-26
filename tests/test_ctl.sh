@@ -310,6 +310,24 @@ assert_contains "new anchor installed" "99999" "$(cat "$D/var/root.key")"
 rm -f "$STUB_STATE/anchor.update"
 assert_contains "anchor reset" '"applied":true' "$(ctl anchor-reset)"
 assert_eq "built-in anchor restored" "$(cat "$MOD/conf/root.key")" "$(cat "$D/var/root.key")"
+# Once running, Unbound rewrites root.key in its own format: tab-separated
+# fields and state comments. The status must read that too.
+TAB="$(printf '\t')"
+{
+    echo "; autotrust trust anchor file"
+    echo ";;id: . 1"
+    echo ";;last_queried: 1795690000 ;;Wed Nov 26 10:00:00 2026"
+    echo ";;last_success: 1795690000 ;;Wed Nov 26 10:00:00 2026"
+    echo ";;query_failed: 0"
+    echo ".${TAB}172800${TAB}IN${TAB}DNSKEY${TAB}257 3 8 AwEAAaz/tAm8 ;{id = 20326 (ksk), size = 2048b} ;;state=2 [  VALID  ] ;;count=0 ;;lastchange=1795600000 ;;Tue Nov 25 10:00:00 2026"
+    echo ".${TAB}172800${TAB}IN${TAB}DNSKEY${TAB}257 3 8 AwEAAa96jeuk ;{id = 38696 (ksk), size = 2048b} ;;state=1 [ ADDPEND ] ;;count=2 ;;lastchange=1795600000 ;;Tue Nov 25 10:00:00 2026"
+} > "$D/var/root.key"
+json="$(ctl settings)"
+assert_json "settings json with autotrust file" "$json"
+assert_contains "autotrust key 20326 read" '{"id":20326,"state":"VALID"}' "$json"
+assert_contains "autotrust key 38696 read" '{"id":38696,"state":"ADDPEND"}' "$json"
+assert_contains "autotrust last success read" '"last_success":1795690000' "$json"
+cp "$MOD/conf/root.key" "$D/var/root.key"
 ctl stop >/dev/null
 ctl settings-reset >/dev/null
 
