@@ -50,7 +50,7 @@ jobs:
             module/action.sh module/uninstall.sh module/customize.sh \
             tests/*.sh tests/stubs/getprop tests/stubs/iptables tests/stubs/settings tests/stubs/bin/*
       - name: Shell tests (busybox ash)
-        run: sudo -E sh tests/run.sh
+        run: sudo sh tests/run.sh
       - uses: actions/setup-node@v4
         with:
           node-version: 22

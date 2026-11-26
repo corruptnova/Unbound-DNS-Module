@@ -13,6 +13,11 @@ if [ -z "$UNBOUND" ] || [ -z "$UCTL" ] || ! command -v dig >/dev/null 2>&1; then
 fi
 [ "$(id -u)" = 0 ] || { echo "test_unbound_live.sh: skipped (needs root for privileged paths)"; exit 0; }
 
+# Ubuntu confines /usr/sbin/unbound with AppArmor (only /etc/unbound etc.);
+# profiles attach by path, so run copies from the temp dir.
+cp "$UNBOUND" "$TMP/unbound" && UNBOUND="$TMP/unbound"
+cp "$UCTL" "$TMP/unbound-control" && UCTL="$TMP/unbound-control"
+
 T="$TMP/data"
 PORT=53535
 mkdir -p "$T/var"
