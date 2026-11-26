@@ -51,6 +51,7 @@ usage: ctl.sh <command> [args]
                              the built-in one
   log [module|unbound] [N]   last N log lines (default 200)
   diag                       troubleshooting report (paste it into a bug report)
+  stats-reset                start the query statistics from zero
 
   setup | daemon | uninstall-cleanup   used by the module itself
 EOF
@@ -76,8 +77,8 @@ status_json() {
     if unbound_running; then
         _run=1; _pid="$(unbound_pid)"
         _stats="$(ubctl stats_noreset 2>/dev/null)"
-        _q="$(printf '%s\n' "$_stats" | sed -n 's/^total\.num\.queries=//p')"
-        _hits="$(printf '%s\n' "$_stats" | sed -n 's/^total\.num\.cachehits=//p')"
+        _q="$(json_num "$(printf '%s\n' "$_stats" | sed -n 's/^total\.num\.queries=//p')")"
+        _hits="$(json_num "$(printf '%s\n' "$_stats" | sed -n 's/^total\.num\.cachehits=//p')")"
         _up="$(printf '%s\n' "$_stats" | sed -n 's/^time\.up=\([0-9]*\).*/\1/p')"
         _mem="$(sed -n 's/^VmRSS:[[:space:]]*\([0-9]*\).*/\1/p' "/proc/$_pid/status" 2>/dev/null)"
     else
@@ -97,8 +98,10 @@ status_json() {
         "$(json_esc "$(cat "$RUN/nat64.ip6tables" 2>/dev/null)")"
     printf '"private_dns":"%s","version":"%s","module_version":"%s",' \
         "$(json_esc "$_pd")" "$(json_esc "$(unbound_version)")" "$(json_esc "$(module_version)")"
-    printf '"queries":%s,"cache_hits":%s,"uptime":%s,"memory_kb":%s,' \
-        "$(json_num "$_q")" "$(json_num "$_hits")" "$(json_num "$_up")" "$(json_num "$_mem")"
+    # Saved totals plus what Unbound counted since the last snapshot.
+    printf '"queries":%s,"cache_hits":%s,"stats_since":%s,"uptime":%s,"memory_kb":%s,' \
+        "$(( $(stat_get QUERIES) + $(json_num "$_q") ))" "$(( $(stat_get CACHE_HITS) + $(json_num "$_hits") ))" \
+        "$(stat_get SINCE)" "$(json_num "$_up")" "$(json_num "$_mem")"
     printf '"blocked":%s,"updating":%s,"last_update":%s,"last_update_ok":%s,' \
         "$(json_num "$(cat "$BLOCK_COUNT" 2>/dev/null)")" "$(locked update && echo true || echo false)" \
         "$(json_num "$(setting_get LAST_UPDATE 0)")" "$(json_bool "$(setting_get LAST_UPDATE_OK 1)")"
@@ -387,7 +390,7 @@ cmd_diag() {
     _sec "NAT64 / 464XLAT (IPv6-only networks)"
     dumpsys connectivity 2>/dev/null | grep -oE 'Nat64Prefix: [^ ]+|v4-[a-z0-9_]+' | sort -u
     ip -4 addr 2>/dev/null | grep -E '^[0-9]+: v4-|inet 192\.0\.0\.' 
-    _sec "unbound counters"
+    _sec "unbound counters (since the last 5-minute snapshot; totals are in status)"
     if unbound_running; then
         ubctl stats_noreset 2>/dev/null | grep -E '^total\.(num\.queries|num\.cachehits|num\.cachemiss|requestlist\.(avg|max|exceeded))=|^unwanted\.|^num\.answer\.rcode\.|^num\.query\.(ipv6|tcp|udpout)'
     else
@@ -532,6 +535,7 @@ case "$cmd" in
         cmd_stop >/dev/null
         private_dns_restore ;;
     diag) cmd_diag ;;
+    stats-reset) stats_reset && printf '{"ok":true}\n' ;;
     settings) settings_json ;;
     settings-apply) cmd_settings_apply "$@" ;;
     settings-reset) run_locked apply 120 _do_settings_reset ;;

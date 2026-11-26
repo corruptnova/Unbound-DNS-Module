@@ -3,6 +3,11 @@
 Notes for module revisions. Releases list the bundled versions on top of
 these notes.
 
+## v1.26.2-r6
+
+- Query and cache statistics keep counting across Unbound restarts, list
+  updates and reboots ("Counted since …", with a Reset button).
+
 ## v1.26.2-r5
 
 - Settings page: the root trust anchor status reads the file Unbound writes

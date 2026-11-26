@@ -34,6 +34,7 @@ setup_data() {
     [ -f "$SOURCES" ] || : > "$SOURCES"
     [ -f "$ALLOW" ] || : > "$ALLOW"
     [ -f "$OWN_BLOCK" ] || : > "$OWN_BLOCK"
+    [ -f "$STATS_FILE" ] || _stats_write 0 0 "$(now)"
     [ -f "$BLOCK_CONF" ] || printf 'server:\n' > "$BLOCK_CONF"
     [ -f "$BLOCK_COUNT" ] || echo 0 > "$BLOCK_COUNT"
     write_runtime_conf
@@ -110,9 +111,51 @@ start_unbound() {
     return 1
 }
 
+# --- statistics that survive restarts -------------------------------------------
+# Unbound zeroes its counters on every restart and reload. stats.conf keeps
+# running totals: before anything that resets Unbound, and every 5 minutes,
+# the counters are added to it. "unbound-control stats" (unlike
+# stats_noreset) reads and zeroes in one step, so nothing is counted twice.
+
+STATS_FILE="$DATA/stats.conf"
+
+stat_get() { _sv="$(sed -n "s/^$1=//p" "$STATS_FILE" 2>/dev/null | tail -n 1)"; json_num "$_sv"; }
+
+_stats_write() {
+    printf 'QUERIES=%s\nCACHE_HITS=%s\nSINCE=%s\n' "$1" "$2" "$3" > "$STATS_FILE.tmp" \
+        && mv -f "$STATS_FILE.tmp" "$STATS_FILE"
+}
+
+_stats_lock() {
+    _sw=0
+    until lock stats; do
+        [ "$_sw" -ge 10 ] && return 1
+        sleep 1; _sw=$((_sw + 1))
+    done
+}
+
+stats_bank() {
+    unbound_running || return 0
+    _sb="$(ubctl stats 2>/dev/null)" || return 0
+    _sq="$(json_num "$(printf '%s\n' "$_sb" | sed -n 's/^total\.num\.queries=//p')")"
+    _sh="$(json_num "$(printf '%s\n' "$_sb" | sed -n 's/^total\.num\.cachehits=//p')")"
+    _stats_lock || return 0
+    _since="$(stat_get SINCE)"; [ "$_since" = 0 ] && _since="$(now)"
+    _stats_write $(( $(stat_get QUERIES) + _sq )) $(( $(stat_get CACHE_HITS) + _sh )) "$_since"
+    unlock stats
+}
+
+stats_reset() {
+    stats_bank
+    _stats_lock || return 1
+    _stats_write 0 0 "$(now)"
+    unlock stats
+}
+
 stop_unbound() {
     _ub="$(unbound_pid)"
     if alive "$_ub" unbound; then
+        stats_bank
         ubctl stop >/dev/null 2>&1 || kill "$_ub" 2>/dev/null
         _t=0
         while alive "$_ub" && [ "$_t" -lt 10 ]; do sleep 1; _t=$((_t + 1)); done
@@ -194,7 +237,10 @@ daemon_main() {
             fi
         fi
 
-        [ $((_tick % 30)) = 0 ] && rotate_logs
+        if [ $((_tick % 30)) = 0 ]; then
+            rotate_logs
+            stats_bank
+        fi
         _tick=$((_tick + 1))
         sleep "${UNBOUND_POLL:-10}" &
         _sl=$!

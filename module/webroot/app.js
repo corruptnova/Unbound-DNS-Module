@@ -70,6 +70,9 @@ function renderStatus(s) {
     ].map(([k, v]) => el('div', {}, el('dt', {}, k), el('dd', {}, v))),
   );
 
+  $('stats-since').textContent = s.stats_since
+    ? `Counted since ${new Date(s.stats_since * 1000).toLocaleDateString()} ·` : '';
+
   const w = [];
   if (s.error && !s.running) w.push(['bad', `Unbound failed to start: ${s.error}`]);
   if (s.running && s.private_dns && s.private_dns !== 'off' && s.private_dns !== 'null')
@@ -281,6 +284,9 @@ function init() {
   $('add-form').addEventListener('submit', addList);
   $('allow-form').addEventListener('submit', addAllow);
   $('own-form').addEventListener('submit', addOwnBlock);
+  $('stats-reset-slot').replaceWith(confirmButton('Reset statistics',
+    () => act(() => ctl('stats-reset'), 'Statistics reset'),
+    { class: 'link-btn', text: 'Reset', armedText: 'Tap again to reset' }));
   $('update-btn').addEventListener('click', () => act(() => ctl('update-lists', '--force', '--bg'), 'Updating all lists…'));
   $('refresh').addEventListener('change', (e) => act(() => ctl('set', 'refresh_hours', e.target.value), 'Refresh interval saved'));
   $('log-details').addEventListener('toggle', (e) => { if (e.target.open) refreshLog(); });

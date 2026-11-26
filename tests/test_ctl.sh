@@ -169,13 +169,36 @@ json="$(ctl status)"
 assert_json "status json" "$json"
 assert_contains "status running" '"running":true' "$json"
 assert_contains "status redirect" '"redirect_active":true' "$json"
-assert_contains "status queries" '"queries":42' "$json"
+# Statistics keep counting across reloads (list updates) and restarts.
+stub_counts() { echo "$1" > "$STUB_STATE/ub.queries"; echo "$2" > "$STUB_STATE/ub.hits"; }
+stub_counts 42 40
+assert_contains "status queries" '"queries":42' "$(ctl status)"
+ctl rebuild >/dev/null                      # reloads Unbound, which zeroes its counters
+stub_counts 5 1
+json="$(ctl status)"
+assert_contains "queries survive a reload" '"queries":47' "$json"
+assert_contains "cache hits survive a reload" '"cache_hits":41' "$json"
+old_pid="$(cat "$STUB_STATE/unbound.pid")"
+ctl restart >/dev/null
+restarted() {
+    [ -f "$STUB_STATE/unbound.pid" ] && [ "$(cat "$STUB_STATE/unbound.pid")" != "$old_pid" ] \
+        && ctl status | grep -q '"running":true' && jump_present
+}
+wait_for 10 restarted && pass || fail "unbound restarted"
+stub_counts 3 0
+assert_contains "queries survive a restart" '"queries":50' "$(ctl status)"
+assert_contains "counting since is reported" '"stats_since":' "$(ctl status)"
+ctl stats-reset >/dev/null
+assert_contains "stats reset" '"queries":0' "$(ctl status)"
+assert_contains "cache hits reset" '"cache_hits":0' "$(ctl status)"
 assert_contains "status version" '"version":"1.26.2"' "$json"
 assert_contains "status nat64 bypass" '"nat64_bypass_v6":"ok"' "$json"
 
 # Unbound dies -> redirect removed, Unbound restarted, redirect back.
+log_mark="$(wc -l < "$D/var/module.log")"
+new_log_has() { tail -n +"$((log_mark + 1))" "$D/var/module.log" | grep -q "$1"; }
 kill "$(cat "$STUB_STATE/unbound.pid")"
-wait_for 10 grep -q "redirect: removed because Unbound is not running" "$D/var/module.log" \
+wait_for 10 new_log_has "redirect: removed because Unbound is not running" \
     && pass || fail "redirect removed when unbound died"
 wait_for 15 jump_present && pass || fail "redirect back after restart"
 

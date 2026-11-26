@@ -10,5 +10,6 @@ if [ -n "${STUB_UNBOUND_FAIL_IF:-}" ] && grep -q "$STUB_UNBOUND_FAIL_IF" "$UNBOU
     exit 1
 fi
 echo $$ > "$STUB_STATE/unbound.pid"
+echo 0 > "$STUB_STATE/ub.queries"; echo 0 > "$STUB_STATE/ub.hits"   # a fresh start counts from zero
 trap 'rm -f "$STUB_STATE/unbound.pid"; exit 0' TERM INT
 while :; do sleep 1; done

@@ -164,7 +164,11 @@ ctl block-remove example.org >/dev/null
 wait_until 20 "removing it unblocks" resolves example.org
 
 say "encrypted forwarding (Quad9, DNS-over-TLS) and back"
+qa="$(ctl status | sed -n 's/.*"queries":\([0-9]*\).*/\1/p')"
 out="$(ctl settings-apply RESOLVER=quad9)"
+qb="$(ctl status | sed -n 's/.*"queries":\([0-9]*\).*/\1/p')"
+[ "${qb:-0}" -ge "${qa:-1}" ] && [ "${qa:-0}" -gt 0 ] && ok "query totals survive the restart ($qa -> $qb)" \
+    || bad "query totals dropped on restart ($qa -> $qb)"
 echo "$out" | grep -q '"applied":true' && ok "switched to Quad9" || bad "switch to Quad9: $out"
 q0="$(ctl status | sed -n 's/.*"queries":\([0-9]*\).*/\1/p')"
 wait_until 30 "resolves through Quad9 over TLS" resolves www.wikimedia.org

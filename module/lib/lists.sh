@@ -137,6 +137,7 @@ lists_rebuild() {
     mv -f "$RUN/count.new" "$BLOCK_COUNT"
     log "lists: blocklist rebuilt ($(cat "$BLOCK_COUNT") zones)"
     if [ "${1:-}" != noreload ] && unbound_running; then
+        stats_bank                      # a reload zeroes Unbound's counters
         ubctl reload_keep_cache >/dev/null 2>&1 || ubctl reload >/dev/null 2>&1 \
             || { log "lists: reload failed"; return 1; }
     fi

@@ -93,6 +93,15 @@ function check(name, ok, detail = '') {
         check('status shows protecting', true);
         check('version shown', (await page.textContent('#stats')).includes('1.26.2'));
         check('ipv6 status shown', (await page.textContent('#stats')).includes('Redirected'));
+        check('counting since shown', (await page.textContent('#stats-since')).startsWith('Counted since'));
+        fs.writeFileSync(path.join(STATE, 'ub.queries'), '7\n');
+        const reset = page.locator('button[aria-label="Reset statistics"]');
+        await reset.click();
+        check('stats reset asks first', (await reset.textContent()) === 'Tap again to reset');
+        await reset.click();
+        await page.waitForFunction(() => document.getElementById('toast').textContent === 'Statistics reset', null, { timeout: 15000 });
+        await page.waitForFunction(() => /Queries\s*0/.test(document.getElementById('stats').textContent), null, { timeout: 15000 });
+        check('stats reset to zero', true);
         check('custom url fields hidden for presets', !(await page.isVisible('#custom-url')));
         check('empty state shown', await page.isVisible('#sources-empty'));
 
