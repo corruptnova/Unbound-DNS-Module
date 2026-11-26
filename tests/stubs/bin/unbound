@@ -1,0 +1,10 @@
+#!/bin/sh
+# Fake unbound: fails like the real one on a config containing BROKEN,
+# otherwise "serves" until killed.
+if grep -q BROKEN "$UNBOUND_DATA/custom.conf" 2>/dev/null; then
+    echo "/data/adb/unbound/custom.conf:1: error: syntax error" >&2
+    exit 1
+fi
+echo $$ > "$STUB_STATE/unbound.pid"
+trap 'rm -f "$STUB_STATE/unbound.pid"; exit 0' TERM INT
+while :; do sleep 1; done

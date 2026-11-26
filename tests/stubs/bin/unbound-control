@@ -1,0 +1,13 @@
+#!/bin/sh
+# Fake unbound-control: talks to the fake unbound through its pid file.
+shift 2   # -c CONF
+echo "unbound-control $*" >> "$STUB_STATE/calls.log"
+pid="$(cat "$STUB_STATE/unbound.pid" 2>/dev/null)"
+up() { [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; }
+case "$1" in
+    status) up ;;
+    stop) up && kill "$pid" ;;
+    stats_noreset) up && printf 'total.num.queries=42\ntotal.num.cachehits=40\ntime.up=12.5\n' ;;
+    reload|reload_keep_cache|log_reopen) up && echo ok ;;
+    *) exit 1 ;;
+esac

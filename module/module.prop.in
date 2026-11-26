@@ -1,0 +1,7 @@
+id=unbound-dns
+name=Unbound DNS
+version=@VERSION@
+versionCode=@VERSION_CODE@
+author=corruptnova
+description=Private, DNSSEC-validating recursive resolver (Unbound @UNBOUND_VERSION@) for every app on the phone, with blocklists. Open the WebUI to manage it.
+updateJson=https://github.com/@REPO@/releases/latest/download/update.json

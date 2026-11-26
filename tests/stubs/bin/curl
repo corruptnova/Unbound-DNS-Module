@@ -1,0 +1,18 @@
+#!/bin/sh
+# Fake curl: serves $STUB_STATE/www/<basename of URL>; STUB_CURL_FAIL=1 fails.
+out=""; url=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o) out="$2"; shift 2 ;;
+        --proto|--proto-redir|--cacert|--connect-timeout|--max-time|--retry|--retry-delay|--max-filesize|--user-agent) shift 2 ;;
+        -*) shift ;;
+        *) url="$1"; shift ;;
+    esac
+done
+echo "curl $url" >> "$STUB_STATE/calls.log"
+if [ -f "$STUB_STATE/curl.fail" ]; then
+    echo "curl: (22) The requested URL returned error: 404" >&2; exit 22
+fi
+src="$STUB_STATE/www/${url##*/}"
+[ -f "$src" ] || { echo "curl: (6) Could not resolve host" >&2; exit 6; }
+cp "$src" "$out"

@@ -1,0 +1,6 @@
+/.cache/
+/build/
+/out/
+/dist/
+node_modules/
+test-results/

@@ -1,0 +1,8 @@
+#!/bin/sh
+# Fake Android "settings": settings get|put|delete global KEY [VALUE]
+d="$STUB_STATE/settings"; mkdir -p "$d"
+case "$1" in
+    get) cat "$d/$3" 2>/dev/null || echo null ;;
+    put) printf '%s\n' "$4" > "$d/$3" ;;
+    delete) rm -f "$d/$3" ;;
+esac

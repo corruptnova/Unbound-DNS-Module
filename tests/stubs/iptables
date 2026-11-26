@@ -1,0 +1,31 @@
+#!/bin/sh
+# Fake iptables/ip6tables keeping rules as files under $STUB_STATE.
+# Supports: -w [N], -t TABLE, -N/-F/-X/-A/-I/-C/-D CHAIN [rule...]
+name="${0##*/}"
+echo "$name $*" >> "$STUB_STATE/calls.log"
+table=filter
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -w) shift; case "${1:-}" in [0-9]*) shift ;; esac ;;
+        -t) table="$2"; shift 2 ;;
+        -N|-F|-X|-A|-I|-C|-D) op="$1"; chain="$2"; shift 2; break ;;
+        *) echo "fake $name: unsupported $1" >&2; exit 2 ;;
+    esac
+done
+[ "$table" = nat ] && [ -f "$STUB_STATE/$name.nonat" ] && exit 1
+dir="$STUB_STATE/$name/$table"
+mkdir -p "$dir"
+f="$dir/$chain"
+builtin_chain() { case "$chain" in OUTPUT|INPUT|FORWARD|PREROUTING|POSTROUTING) return 0 ;; esac; return 1; }
+builtin_chain && [ ! -e "$f" ] && : > "$f"
+rule="$*"
+case "$op" in
+    -N) [ -e "$f" ] && exit 1; : > "$f" ;;
+    -F) [ -e "$f" ] || exit 1; : > "$f" ;;
+    -X) [ -e "$f" ] || exit 1; rm -f "$f" ;;
+    -A) [ -e "$f" ] || exit 1; echo "$rule" >> "$f" ;;
+    -I) [ -e "$f" ] || exit 1; { echo "$rule"; cat "$f"; } > "$f.tmp"; mv "$f.tmp" "$f" ;;
+    -C) [ -e "$f" ] && grep -qxF -- "$rule" "$f" ;;
+    -D) [ -e "$f" ] && grep -qxF -- "$rule" "$f" || exit 1
+        awk -v r="$rule" 'done || $0 != r { print; next } { done = 1 }' "$f" > "$f.tmp"; mv "$f.tmp" "$f" ;;
+esac
