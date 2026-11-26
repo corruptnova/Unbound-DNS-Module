@@ -193,6 +193,7 @@ case "$cmd" in
     start) cmd_start ;;
     stop) cmd_stop ;;
     restart)
+        touch "$RUN/restart"
         stop_unbound
         wake_daemon || cmd_start
         echo restarting ;;

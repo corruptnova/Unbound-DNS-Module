@@ -164,8 +164,13 @@ wait_for 10 grep -q "unbound: failed to start" "$D/var/module.log" && pass || fa
 sleep 2
 jump_absent && pass || fail "no redirect while unbound cannot start"
 assert_contains "status shows error" "syntax error" "$(ctl status)"
-ctl stop >/dev/null
+# Fixing the config and asking for a restart retries at once, not after
+# the back-off.
+sleep 6
 sed -i '/BROKEN/d' "$D/custom.conf"
+ctl restart >/dev/null
+wait_for 4 jump_present && pass || fail "restart retries immediately after a fix"
+ctl stop >/dev/null
 
 # --- daemon: kernel without IPv6 NAT ---------------------------------------------
 touch "$STUB_STATE/ip6tables.nonat"

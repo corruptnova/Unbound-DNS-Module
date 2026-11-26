@@ -15,6 +15,7 @@ load_versions() {
     while IFS= read -r line; do
         case "$line" in ''|'#'*) continue ;; esac
         key="${line%%=*}"
+        # shellcheck disable=SC2163  # exports NAME=value from the file
         [ -n "${!key+x}" ] || export "$line"
     done < "$ROOT_DIR/versions.env"
 }

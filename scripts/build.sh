@@ -6,7 +6,8 @@
 # Output: out/<abi>/{unbound,unbound-control,curl}
 #
 # Environment:
-#   ANDROID_NDK_HOME   NDK to use (downloaded into .cache if unset)
+#   ANDROID_NDK_HOME   NDK to use if it is the pinned version (otherwise the
+#                      pinned NDK is downloaded into .cache)
 #   JOBS               parallel make jobs (default: nproc)
 #   <NAME>_SRC_DIR     use an already-extracted source tree for NAME
 #                      (OPENSSL, EXPAT, UNBOUND, CURL) instead of the pinned
@@ -23,9 +24,11 @@ ensure_ndk() {
     if [ -n "$ndk" ] && [ -d "$ndk/toolchains/llvm" ]; then
         local rel
         rel="$(sed -n 's/^Pkg.ReleaseName *= *//p' "$ndk/source.properties" 2>/dev/null || true)"
-        [ "$rel" = "$NDK_VERSION" ] || log "warning: NDK at $ndk is ${rel:-unknown}, versions.env pins $NDK_VERSION"
-        NDK="$ndk"
-        return
+        if [ "$rel" = "$NDK_VERSION" ]; then
+            NDK="$ndk"
+            return
+        fi
+        log "NDK at $ndk is ${rel:-unknown}; versions.env pins $NDK_VERSION, fetching that"
     fi
     NDK="$CACHE_DIR/android-ndk-$NDK_VERSION"
     if [ ! -d "$NDK/toolchains/llvm" ]; then
@@ -50,7 +53,8 @@ prepare_src() {
         rm -rf "$dir"; mkdir -p "$dir"
         cp -a "${!override_var}/." "$dir/"
     else
-        local tarball="$CACHE_DIR/src/$(basename "$url")"
+        local tarball
+        tarball="$CACHE_DIR/src/$(basename "$url")"
         fetch_verified "$url" "$sha" "$tarball"
         rm -rf "$dir"; mkdir -p "$dir"
         tar -xf "$tarball" -C "$dir" --strip-components=1
@@ -90,7 +94,8 @@ build_openssl() {
     (
         cd "$src"
         # OpenSSL's android targets pick clang from PATH and add --target
-        # themselves, so hide our CC/AR.
+        # themselves, so hide our CC/AR. OPENSSL_TRIM is a list of options.
+        # shellcheck disable=SC2086
         env -u CC -u CXX -u AR -u RANLIB -u NM -u STRIP -u CFLAGS -u LDFLAGS \
             ANDROID_NDK_ROOT="$NDK" PATH="$TOOLCHAIN/bin:$PATH" \
             ./Configure "$(abi_openssl_target "$ABI")" -D__ANDROID_API__="$ANDROID_API" \

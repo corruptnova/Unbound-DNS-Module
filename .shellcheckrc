@@ -1,0 +1,3 @@
+# Module and test scripts are sourced into each other, so shared variables
+# look unused and sourced paths are resolved at runtime.
+disable=SC2034,SC1091

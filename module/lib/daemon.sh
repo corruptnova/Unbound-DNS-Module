@@ -151,6 +151,10 @@ daemon_main() {
 
     _backoff=5; _next_try=0; _tick=0; _pd_done=0
     while [ "$_stop" = 0 ] && [ ! -f "$RUN/stop" ] && ! module_off; do
+        if [ -f "$RUN/restart" ]; then          # user asked: retry right away
+            rm -f "$RUN/restart"
+            _next_try=0; _backoff=5
+        fi
         if ! unbound_running; then
             if redirect_active; then
                 redirect_remove
