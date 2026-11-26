@@ -101,11 +101,13 @@ Removing the module deletes `/data/adb/unbound` and restores Private DNS.
 - **Apps with their own DNS-over-HTTPS bypass Unbound.** Chrome's "Use secure
   DNS" and Firefox's DNS over HTTPS are examples. Turn those off if you want
   their lookups to go through Unbound too.
-- **IPv6-only mobile networks that rely on DNS64.** Android finds the
-  carrier's NAT64 prefix with a DNS lookup that Unbound cannot answer the way
-  the carrier's resolver does. On such carriers, IPv4-only sites may stop
-  loading on mobile data. Switch the redirect off if you hit this. It is a
-  known limitation that may be addressed later.
+- **IPv6-only mobile networks** (T-Mobile US and many others). Android
+  reaches IPv4-only services (GitHub, for example) through 464XLAT, which it
+  only starts after asking the carrier's DNS about `ipv4only.arpa`. That one
+  lookup is let through to the carrier; every other lookup still goes to
+  Unbound. The bypass needs the kernel's iptables string match. If the
+  WebUI or `ctl.sh diag` shows it as unsupported, IPv4-only services may not
+  load on such networks; switch the redirect off there.
 - **Kernels without IPv6 NAT** cannot redirect IPv6 DNS. The module then
   leaves IPv6 DNS alone, so DNS keeps working, and says so in the WebUI.
 - **Memory.** Each blocked domain costs about 400 bytes in Unbound. 250,000

@@ -1,8 +1,8 @@
 # Send every DNS query on the phone to the local Unbound.
 # shellcheck shell=sh
 #
-# nat/OUTPUT -> UNBOUND_DNS: RETURN for exempt uids, REDIRECT udp/tcp 53 to
-# UB_PORT. filter/OUTPUT -> UNBOUND_DOT: REJECT 853 (DNS-over-TLS/QUIC) so
+# nat/OUTPUT -> UNBOUND_DNS: RETURN for exempt uids and NAT64 discovery,
+# REDIRECT udp/tcp 53 to UB_PORT. filter/OUTPUT -> UNBOUND_DOT: REJECT 853 (DNS-over-TLS/QUIC) so
 # nothing quietly bypasses the resolver. IPv6 is best effort: kernels without
 # IPv6 NAT keep their IPv6 DNS untouched rather than losing DNS altogether.
 
@@ -10,6 +10,14 @@ NAT_CHAIN=UNBOUND_DNS
 DOT_CHAIN=UNBOUND_DOT
 AID_NETWORK_STACK=1073
 CAPTIVE_PORTAL_PKGS="com.android.captiveportallogin com.google.android.captiveportallogin"
+
+# RFC 7050 NAT64 prefix discovery: Android asks the network's resolver for
+# the AAAA of ipv4only.arpa and only starts 464XLAT (clat) once that DNS64
+# resolver answers. On IPv6-only networks (most US carriers) Unbound cannot
+# give that answer, so IPv4-only services (GitHub, ...) become unreachable.
+# Letting just this one name through reveals nothing about what is browsed.
+# Matched in the first (and only) packet of a UDP query, in wire format.
+NAT64_QNAME='|08|ipv4only|04|arpa|00|'
 
 # Unbound itself, Android's network-validation stack and the captive portal
 # login app (so "Sign in to network" keeps working).
@@ -30,6 +38,14 @@ _chains_add() {
     for _u in $(exempt_uids | awk '!seen[$0]++'); do
         _ipt "$_i" -w -t nat -A "$NAT_CHAIN" -m owner --uid-owner "$_u" -j RETURN || return 1
     done
+    # Needs the kernel's string match; without it, keep redirecting anyway.
+    if _ipt "$_i" -w -t nat -A "$NAT_CHAIN" -p udp --dport 53 -m string --algo bm --icase \
+            --hex-string "$NAT64_QNAME" -j RETURN; then
+        echo ok > "$RUN/nat64.$_i"
+    else
+        echo unsupported > "$RUN/nat64.$_i"
+        log "redirect: $_i has no string match; NAT64 discovery (IPv6-only networks) goes to Unbound"
+    fi
     _ipt "$_i" -w -t nat -A "$NAT_CHAIN" -p udp --dport 53 -j REDIRECT --to-ports "$UB_PORT" || return 1
     _ipt "$_i" -w -t nat -A "$NAT_CHAIN" -p tcp --dport 53 -j REDIRECT --to-ports "$UB_PORT" || return 1
     _ipt "$_i" -w -t nat -C OUTPUT -j "$NAT_CHAIN" || _ipt "$_i" -w -t nat -I OUTPUT -j "$NAT_CHAIN" || return 1
@@ -83,7 +99,7 @@ redirect_apply() {
 redirect_remove() {
     _chains_del iptables
     _chains_del ip6tables
-    rm -f "$RUN/redirect.v6"
+    rm -f "$RUN/redirect.v6" "$RUN/nat64.iptables" "$RUN/nat64.ip6tables"
 }
 
 redirect_active() { _ipt iptables -w -t nat -C OUTPUT -j "$NAT_CHAIN"; }

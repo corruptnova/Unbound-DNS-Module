@@ -3,6 +3,7 @@
 # Supports: -w [N], -t TABLE, -N/-F/-X/-A/-I/-C/-D CHAIN [rule...]
 name="${0##*/}"
 echo "$name $*" >> "$STUB_STATE/calls.log"
+case "$*" in *"-m string"*) [ -f "$STUB_STATE/$name.nostring" ] && exit 1 ;; esac
 table=filter
 while [ $# -gt 0 ]; do
     case "$1" in

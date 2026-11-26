@@ -130,6 +130,15 @@ assert_contains "udp redirect" "-p udp --dport 53 -j REDIRECT --to-ports 5335" "
 assert_contains "tcp redirect" "-p tcp --dport 53 -j REDIRECT --to-ports 5335" "$rules"
 assert_contains "ipv6 redirect" "-p udp --dport 53 -j REDIRECT --to-ports 5335" "$(nat ip6tables UNBOUND_DNS)"
 assert_contains "dot rejected" "-p tcp --dport 853 -j REJECT --reject-with tcp-reset" "$(cat "$STUB_STATE/iptables/filter/UNBOUND_DOT")"
+# NAT64 discovery (ipv4only.arpa) goes to the network's DNS64, ahead of the redirect.
+nat64_rule='-p udp --dport 53 -m string --algo bm --icase --hex-string |08|ipv4only|04|arpa|00| -j RETURN'
+for fam in iptables ip6tables; do
+    r="$(nat $fam UNBOUND_DNS)"
+    assert_contains "$fam: NAT64 discovery bypass" "$nat64_rule" "$r"
+    first_redirect="$(echo "$r" | grep -n REDIRECT | head -n 1 | cut -d: -f1)"
+    bypass_line="$(echo "$r" | grep -n ipv4only | cut -d: -f1)"
+    [ -n "$bypass_line" ] && [ "$bypass_line" -lt "$first_redirect" ] && pass || fail "$fam: bypass must come before REDIRECT"
+done
 pd_off() { [ "$(cat "$STUB_STATE/settings/private_dns_mode")" = off ]; }
 wait_for 5 pd_off && pass || fail "private dns turned off"
 assert_eq "private dns saved" "hostname" "$(sed -n 's/^PRIVATE_DNS_SAVED=//p' "$D/settings.conf")"
@@ -140,6 +149,7 @@ assert_contains "status running" '"running":true' "$json"
 assert_contains "status redirect" '"redirect_active":true' "$json"
 assert_contains "status queries" '"queries":42' "$json"
 assert_contains "status version" '"version":"1.26.2"' "$json"
+assert_contains "status nat64 bypass" '"nat64_bypass_v6":"ok"' "$json"
 
 # Unbound dies -> redirect removed, Unbound restarted, redirect back.
 kill "$(cat "$STUB_STATE/unbound.pid")"
@@ -179,6 +189,15 @@ wait_for 10 jump_present && pass || fail "ipv4 redirect without ipv6 nat"
 assert_contains "status ipv6 unsupported" '"ipv6":"unsupported"' "$(ctl status)"
 ctl stop >/dev/null
 rm -f "$STUB_STATE/ip6tables.nonat"
+
+# --- daemon: kernel without the string match -------------------------------------
+touch "$STUB_STATE/iptables.nostring" "$STUB_STATE/ip6tables.nostring"
+sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
+wait_for 10 jump_present && pass || fail "redirect works without string match"
+assert_not_contains "no bypass rule without string match" "ipv4only" "$(nat iptables UNBOUND_DNS)"
+assert_contains "status reports missing bypass" '"nat64_bypass_v6":"unsupported"' "$(ctl status)"
+ctl stop >/dev/null
+rm -f "$STUB_STATE/iptables.nostring" "$STUB_STATE/ip6tables.nostring"
 
 # --- module disabled in the manager -> daemon stops and restores ------------------
 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &

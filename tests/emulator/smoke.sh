@@ -111,6 +111,19 @@ q1="$(ctl status | sed -n 's/.*"queries":\([0-9]*\).*/\1/p')"
 [ "$q1" -gt "$q0" ] && ok "Unbound counted the queries ($q0 -> $q1)" || bad "query count did not grow ($q0 -> $q1)"
 ctl status | grep -q '"ipv6":"ok"' && ok "IPv6 DNS redirected" || echo "note: IPv6 NAT not available on this image"
 
+say "NAT64 discovery bypass (ipv4only.arpa goes to the network's DNS64)"
+if ctl status | grep -q '"nat64_bypass_v4":"ok"'; then
+    ok "bypass rule installed on this kernel"
+    nat64_count() { sh_dev "iptables -w -t nat -L UNBOUND_DNS -v -n -x" | awk '/STRING|ipv4only/ { print $1; exit }'; }
+    c0="$(nat64_count)"
+    sh_dev "ping -c 1 -W 2 ipv4only.arpa >/dev/null 2>&1; true"
+    c1="$(nat64_count)"
+    [ "${c1:-0}" -gt "${c0:-0}" ] && ok "ipv4only.arpa lookups bypass Unbound ($c0 -> $c1 packets)" \
+        || bad "ipv4only.arpa lookups did not hit the bypass ($c0 -> $c1)"
+else
+    bad "bypass rule not installed: $(ctl status | grep -o '"nat64_bypass_v4":"[a-z]*"')"
+fi
+
 say "lookups from a real app's uid (apps, not root, are what users run)"
 # Run curl as an installed app's uid: getaddrinfo then goes through netd
 # exactly as for that app (permission checks, socket owned by the app uid).

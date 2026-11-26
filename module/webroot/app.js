@@ -170,10 +170,12 @@ function renderStatus(s) {
 async function refreshStatus() {
   try {
     const s = await ctlJson('status');
-    const wasUpdating = state.status && state.status.updating;
+    const prev = state.status;
     state.status = s;
     renderStatus(s);
-    if (wasUpdating && !s.updating) refreshLists();
+    // A list update finished. Compare the finish time, not just the
+    // "updating" flag: a quick update can start and end between two polls.
+    if (prev && !s.updating && (prev.updating || prev.last_update !== s.last_update)) refreshLists();
   } catch (e) {
     $('status-dot').className = 'dot bad';
     $('status-text').textContent = 'Cannot reach the module';

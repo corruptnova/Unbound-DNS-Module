@@ -77,6 +77,9 @@ status_json() {
         "$(daemon_running && echo true || echo false)" "$(json_num "$_pid")"
     printf '"redirect_enabled":%s,"redirect_active":%s,"ipv6":"%s",' \
         "$(json_bool "$(setting_get REDIRECT 1)")" "$(json_bool $_act)" "$(json_esc "${_v6:-}")"
+    printf '"nat64_bypass_v4":"%s","nat64_bypass_v6":"%s",' \
+        "$(json_esc "$(cat "$RUN/nat64.iptables" 2>/dev/null)")" \
+        "$(json_esc "$(cat "$RUN/nat64.ip6tables" 2>/dev/null)")"
     printf '"private_dns":"%s","version":"%s","module_version":"%s",' \
         "$(json_esc "$_pd")" "$(json_esc "$(unbound_version)")" "$(json_esc "$(module_version)")"
     printf '"queries":%s,"cache_hits":%s,"uptime":%s,"memory_kb":%s,' \
@@ -169,6 +172,9 @@ cmd_diag() {
     _sec "networks and their DNS servers"
     dumpsys connectivity 2>/dev/null | grep -oE 'ni\{[A-Z_]+[^}]*\}|InterfaceName: [^ ]+|DnsAddresses: \[[^]]*\]|PrivateDnsServerName: [^ ]+|UsePrivateDns: [a-z]+' | head -n 40
     echo "private_dns_mode: $(settings get global private_dns_mode 2>/dev/null)"
+    _sec "NAT64 / 464XLAT (IPv6-only networks)"
+    dumpsys connectivity 2>/dev/null | grep -oE 'Nat64Prefix: [^ ]+|v4-[a-z0-9_]+' | sort -u
+    ip -4 addr 2>/dev/null | grep -E '^[0-9]+: v4-|inet 192\.0\.0\.' 
     _sec "unbound counters"
     if unbound_running; then
         ubctl stats_noreset 2>/dev/null | grep -E '^total\.(num\.queries|num\.cachehits|num\.cachemiss|requestlist\.(avg|max|exceeded))=|^unwanted\.|^num\.answer\.rcode\.|^num\.query\.(ipv6|tcp|udpout)'
