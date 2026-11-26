@@ -155,5 +155,5 @@ jobs:
           target: google_apis
           arch: x86_64
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save -dns-server 8.8.8.8,1.1.1.1
           script: bash tests/emulator/smoke.sh "$(ls dist/unbound-dns-*.zip)"

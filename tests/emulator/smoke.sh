@@ -8,7 +8,7 @@
 # /data/adb/modules/unbound-dns, SELinux permissive like KernelSU's root
 # domain. Needs a static x86_64 busybox on the host (BUSYBOX, default
 # /bin/busybox from Ubuntu's busybox-static).
-set -euo pipefail
+set -uo pipefail
 
 ZIP="$1"
 BUSYBOX="${BUSYBOX:-/bin/busybox}"
@@ -21,17 +21,28 @@ bad() { echo "FAIL $*"; FAILS=$((FAILS + 1)); }
 sh_dev() { adb shell "$@" | tr -d '\r'; }
 ctl() { sh_dev "/data/adb/ksu/bin/busybox sh $MOD/ctl.sh $*"; }
 
-# wait_until SECONDS DESCRIPTION CMD...
+# wait_until SECONDS DESCRIPTION CMD...: records a failure but keeps going,
+# so one run reports everything. Use `|| fatal` where nothing after can work.
 wait_until() {
-    local s="$1" what="$2"; shift 2
-    for _ in $(seq 1 "$s"); do
+    local s="$1" what="$2" start=$SECONDS; shift 2
+    while [ $((SECONDS - start)) -lt "$s" ]; do
         if "$@" >/dev/null 2>&1; then ok "$what"; return 0; fi
         sleep 1
     done
     bad "$what (after ${s}s)"; return 1
 }
+fatal() { dump_logs; echo "emulator smoke test: stopping, nothing after this can pass"; exit 1; }
 
-resolves() { sh_dev "ping -c 1 -W 2 $1 2>&1" | grep -q "^PING $1 ("; }
+net_diag() {
+    say "network diagnostics"
+    sh_dev "ping -c 1 -W 2 www.google.com 2>&1; echo exit=\$?" || true
+    sh_dev "getprop | grep -iE 'dns|net\\.' | head -20" || true
+    sh_dev "ip addr; ip route; ip rule" || true
+    sh_dev "dumpsys connectivity | grep -iE 'NetworkAgentInfo|DnsAddresses|Dns ' | head -20" || true
+    sh_dev "settings get global private_dns_mode" || true
+}
+
+resolves() { sh_dev "ping -c 1 -W 2 $1 2>&1" | grep -q "^PING $1"; }
 unresolvable() { sh_dev "ping -c 1 -W 2 $1 2>&1" | grep -qi "unknown host"; }
 status_has() { ctl status | grep -q "$1"; }
 redirect_active() { sh_dev "iptables -w -t nat -C OUTPUT -j UNBOUND_DNS && echo yes" | grep -q yes; }
@@ -43,7 +54,6 @@ dump_logs() {
     sh_dev "cat /data/adb/unbound/var/module.log; echo ---; tail -n 60 /data/adb/unbound/var/unbound.log; echo ---; cat /data/adb/unbound/var/unbound.stderr" || true
     sh_dev "iptables -w -t nat -S; ip6tables -w -t nat -S" || true
 }
-trap 'dump_logs' ERR
 
 say "prepare device"
 adb wait-for-device
@@ -72,16 +82,17 @@ sh_dev "cd $MOD && ARCH=$arch API=$api MODPATH=$MOD ASH_STANDALONE=1 /data/adb/k
 sh_dev "test -x $MOD/bin/unbound" && ok "binaries for $abi installed" || bad "binaries installed"
 
 say "baseline: emulator DNS works before the module starts"
-wait_until 30 "resolves www.google.com without the module" resolves www.google.com
+wait_until 120 "resolves www.google.com without the module" resolves www.google.com || net_diag
 
 say "start (service.sh)"
 sh_dev "ASH_STANDALONE=1 /data/adb/ksu/bin/busybox sh $MOD/service.sh"
-wait_until 90 "unbound running" status_has '"running":true'
+wait_until 90 "unbound running" status_has '"running":true' || fatal
 wait_until 20 "redirect active" redirect_active
 wait_until 20 "private dns switched off" sh -c "[ \"\$(adb shell settings get global private_dns_mode | tr -d '\r')\" = off ]"
 
 say "privileges"
 pid="$(ctl status | sed -n 's/.*"pid":\([0-9]*\).*/\1/p')"
+[ -n "$pid" ] && [ "$pid" != 0 ] || fatal
 uid="$(sh_dev "grep ^Uid: /proc/$pid/status" | awk '{print $2}')"
 [ "$uid" = 3003 ] && ok "unbound runs as uid 3003" || bad "unbound uid is $uid"
 root="$(sh_dev "readlink /proc/$pid/root")"
@@ -128,8 +139,8 @@ wait_until 30 "redirect removed when disabled" redirect_inactive
 wait_until 10 "private dns restored" sh -c "[ \"\$(adb shell settings get global private_dns_mode | tr -d '\r')\" = opportunistic ]"
 resolves www.google.com && ok "DNS works after disable" || bad "DNS after disable"
 
-trap - ERR
 if [ "$FAILS" -gt 0 ]; then
+    net_diag
     dump_logs
     echo "emulator smoke test: $FAILS failed"
     exit 1
