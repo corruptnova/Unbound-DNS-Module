@@ -1,0 +1,15 @@
+#!/bin/sh
+# Fake unbound-anchor: -a FILE is updated when $STUB_STATE/anchor.update
+# exists; $STUB_STATE/anchor.fail simulates a failed fetch (exit 0, as the
+# real tool does on errors).
+echo "unbound-anchor $*" >> "$STUB_STATE/calls.log"
+while [ $# -gt 0 ]; do
+    case "$1" in -a) f="$2"; shift 2 ;; -C|-f|-c|-r) shift 2 ;; *) shift ;; esac
+done
+if [ -f "$STUB_STATE/anchor.fail" ]; then echo "resolve data.iana.org: no address"; exit 0; fi
+if [ -f "$STUB_STATE/anchor.update" ]; then
+    echo ". IN DS 99999 8 2 ABCDEF ; updated by stub" > "$f"
+    echo "success: the anchor has been updated using the cert"
+    exit 1
+fi
+echo "success: the anchor is ok"

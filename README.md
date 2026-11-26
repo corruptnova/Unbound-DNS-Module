@@ -32,8 +32,21 @@ The manager then offers the update like any other.
   Presets are included for OISD, HaGeZi and StevenBlack. Lists refresh on a
   schedule (daily by default). If a download fails, the last good copy stays
   in use. Blocking a domain also blocks its subdomains.
-- **Allowlist.** Allowed domains, and their subdomains, are never blocked,
-  whichever list contains them.
+- **Your own blocklist.** Type a domain to block it and everything under it
+  (`*.example.com` works too). Your entries override the downloaded lists.
+- **Allowlist.** Allowed domains, and their subdomains, are never blocked by
+  a list. Between your own blocklist and the allowlist, the more specific
+  name wins; on an exact tie the allowlist wins.
+- **Recursive or encrypted forwarding.** Keep the default recursive mode, or
+  send every lookup over DNS-over-TLS to Cloudflare, Quad9, ControlD's free
+  resolver or your own servers. The installer asks (volume keys, 10 seconds,
+  default recursive), and you can change it any time on the settings page.
+- **Settings page.** Cache size and times, prefetching, serving stale
+  answers, threads, DNSSEC (on/off, permissive mode, trust-anchor update and
+  reset), query-name minimisation, DNS-rebinding protection, IPv6 to servers,
+  what blocked names answer, log level, and an editor for `custom.conf`. If
+  Unbound does not come up with new settings within 30 seconds, the previous
+  ones are restored automatically.
 - **Least privilege.** Unbound is locked into `/data/adb/unbound` (a chroot)
   and runs as an unprivileged user (uid 3003, `inet`) instead of root.
 - **Captive portals keep working.** Android's network check and the Wi-Fi
@@ -46,7 +59,11 @@ The manager then offers the update like any other.
 
 1. Download `unbound-dns-v<version>.zip` from
    [Releases](../../releases/latest).
-2. Install it in the KernelSU manager (Modules → Install), then reboot.
+2. Install it in the KernelSU manager (Modules → Install). The installer
+   asks how Unbound should resolve names: Vol+ shows the next option
+   (Recursive, Cloudflare, Quad9, ControlD), Vol− chooses. If you press
+   nothing for 10 seconds it stays recursive (on an update: your current
+   choice). Then reboot.
 3. Open the module's WebUI to add blocklists. Nothing is blocked until you add
    one.
 
@@ -58,8 +75,9 @@ WebUIs (KsuWebUI, MMRL) work.
 
 **WebUI** (KernelSU manager → Modules → Unbound DNS → open): shows status, a
 redirect on/off switch, query and cache statistics, and memory use. You can
-add, remove, enable and disable blocklists, edit the allowlist and read the
-logs there.
+add, remove, enable and disable blocklists, edit your own blocklist and the
+allowlist, and read the logs and a diagnostics report there. **Settings**
+(top right) opens the Unbound settings page.
 
 **Action button**: turns the DNS redirect off and back on.
 
@@ -70,12 +88,16 @@ sh /data/adb/modules/unbound-dns/ctl.sh help
 sh /data/adb/modules/unbound-dns/ctl.sh status
 sh /data/adb/modules/unbound-dns/ctl.sh list-add https://small.oisd.nl/ "OISD small"
 sh /data/adb/modules/unbound-dns/ctl.sh update-lists
+sh /data/adb/modules/unbound-dns/ctl.sh block-add '*.example.com'
+sh /data/adb/modules/unbound-dns/ctl.sh settings-apply RESOLVER=quad9
+sh /data/adb/modules/unbound-dns/ctl.sh anchor-update
 ```
 
-**Your own Unbound settings** go in `/data/adb/unbound/custom.conf`. It is
-read last and never overwritten. Restart Unbound afterwards (`ctl.sh
-restart`). If Unbound rejects the file, it won't start, the phone keeps using
-normal DNS, and the WebUI shows the error.
+**Your own Unbound settings** go in `/data/adb/unbound/custom.conf`: edit it
+on the settings page (Advanced), where a rejected file is rolled back
+automatically, or by hand followed by `ctl.sh restart`. It is read last and
+never overwritten. Don't define a `forward-zone` for `"."` there while a
+forwarder is chosen on the settings page.
 
 **Local blocklists**: put any list file in `/data/adb/unbound/lists/local/`
 and run `ctl.sh rebuild`.
@@ -86,8 +108,10 @@ and run `ctl.sh rebuild`.
 |---|---|
 | `/data/adb/modules/unbound-dns/` | module code and binaries (replaced on update) |
 | `/data/adb/unbound/custom.conf` | your Unbound settings |
-| `/data/adb/unbound/lists/` | blocklist URLs, allowlist, local lists, downloaded copies |
-| `/data/adb/unbound/settings.conf` | redirect on/off, refresh interval |
+| `/data/adb/unbound/lists/` | blocklist URLs, your blocklist, allowlist, local lists, downloaded copies |
+| `/data/adb/unbound/settings.conf` | redirect on/off, refresh interval, settings-page choices |
+| `/data/adb/unbound/forwarders.list` | your custom DNS-over-TLS servers |
+| `/data/adb/unbound/options.conf` | Unbound config generated from the settings page |
 | `/data/adb/unbound/var/` | Unbound log, DNSSEC trust anchor, control socket |
 | `/data/adb/unbound/var/module.log` | what the module did and when |
 
@@ -97,7 +121,11 @@ Removing the module deletes `/data/adb/unbound` and restores Private DNS.
 
 - **Recursive is not encrypted.** Queries to the authoritative servers travel
   in plain text, so your network operator can still see which names you look
-  up. The gain is that no single DNS company collects all of them.
+  up. The gain is that no single DNS company collects all of them. Choosing a
+  forwarder flips that trade-off: your network sees nothing, the provider
+  sees everything.
+- **Mullvad DNS is not offered** because Mullvad shut its public DNS down on
+  2 November 2026.
 - **Apps with their own DNS-over-HTTPS bypass Unbound.** Chrome's "Use secure
   DNS" and Firefox's DNS over HTTPS are examples. Turn those off if you want
   their lookups to go through Unbound too.
@@ -125,8 +153,8 @@ Removing the module deletes `/data/adb/unbound` and restores Private DNS.
 
 - OpenSSL 3.5 LTS (static, trimmed to what DNSSEC and HTTPS need)
 - expat (static)
-- Unbound: `unbound` and `unbound-control`, linked only against Android's
-  libc
+- Unbound: `unbound`, `unbound-control` and `unbound-anchor`, linked only
+  against Android's libc
 - curl: an HTTPS-only client used for list downloads. It verifies
   certificates against Android's system CA store.
 

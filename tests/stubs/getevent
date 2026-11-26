@@ -1,0 +1,15 @@
+#!/bin/sh
+# Fake getevent: each call takes the next line of $STUB_STATE/events
+# ("up" or "down") and prints it as a volume key press; with no line left it
+# waits like the real tool until it is killed by timeout.
+f="$STUB_STATE/events"
+if [ -s "$f" ]; then
+    k="$(head -n 1 "$f")"; sed -i '1d' "$f"
+    case "$k" in
+        up) echo "/dev/input/event0: EV_KEY       KEY_VOLUMEUP         DOWN" ;;
+        down) echo "/dev/input/event0: EV_KEY       KEY_VOLUMEDOWN       DOWN" ;;
+        release) echo "/dev/input/event0: EV_KEY       KEY_VOLUMEDOWN       UP" ;;
+    esac
+    exit 0
+fi
+sleep 30

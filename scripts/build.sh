@@ -3,7 +3,7 @@
 #
 #   scripts/build.sh <arm64-v8a|armeabi-v7a|x86_64|all>
 #
-# Output: out/<abi>/{unbound,unbound-control,curl}
+# Output: out/<abi>/{unbound,unbound-control,unbound-anchor,curl}
 #
 # Environment:
 #   ANDROID_NDK_HOME   NDK to use if it is the pinned version (otherwise the
@@ -161,9 +161,9 @@ build_unbound() {
             --with-pthreads \
             >"$BUILD/unbound-configure.log" 2>&1 \
             || { tail -40 "$BUILD/unbound-configure.log"; die "Unbound configure failed"; }
-        make -j"$JOBS" unbound unbound-control >"$BUILD/unbound-build.log" 2>&1 \
+        make -j"$JOBS" unbound unbound-control unbound-anchor >"$BUILD/unbound-build.log" 2>&1 \
             || { tail -40 "$BUILD/unbound-build.log"; die "Unbound build failed"; }
-        install -m 0755 unbound unbound-control "$OUT/"
+        install -m 0755 unbound unbound-control unbound-anchor "$OUT/"
     )
 }
 
@@ -204,7 +204,7 @@ build_abi() {
     build_expat
     build_unbound
     build_curl
-    "$STRIP" --strip-unneeded "$OUT/unbound" "$OUT/unbound-control" "$OUT/curl"
+    "$STRIP" --strip-unneeded "$OUT/unbound" "$OUT/unbound-control" "$OUT/unbound-anchor" "$OUT/curl"
     mkdir -p "$OUT/licenses"
     cp "$BUILD/src/unbound/LICENSE" "$OUT/licenses/unbound.txt"
     cp "$BUILD/src/openssl/LICENSE.txt" "$OUT/licenses/openssl.txt"
@@ -219,7 +219,7 @@ build_abi() {
         echo "ndk=$NDK_VERSION api=$ANDROID_API"
         echo "unbound=$UNBOUND_VERSION openssl=$OPENSSL_VERSION expat=$EXPAT_VERSION curl=$CURL_VERSION"
     } > "$OUT/BUILDINFO"
-    log "[$ABI] done: $(cd "$OUT" && du -ch unbound unbound-control curl | tail -1)"
+    log "[$ABI] done: $(cd "$OUT" && du -ch unbound unbound-control unbound-anchor curl | tail -1)"
 }
 
 [ $# -eq 1 ] || die "usage: $0 <arm64-v8a|armeabi-v7a|x86_64|all>"

@@ -5,6 +5,10 @@ if grep -q BROKEN "$UNBOUND_DATA/custom.conf" 2>/dev/null; then
     echo "/data/adb/unbound/custom.conf:1: error: syntax error" >&2
     exit 1
 fi
+if [ -n "${STUB_UNBOUND_FAIL_IF:-}" ] && grep -q "$STUB_UNBOUND_FAIL_IF" "$UNBOUND_DATA/options.conf" 2>/dev/null; then
+    echo "/data/adb/unbound/options.conf: error: value out of range" >&2
+    exit 1
+fi
 echo $$ > "$STUB_STATE/unbound.pid"
 trap 'rm -f "$STUB_STATE/unbound.pid"; exit 0' TERM INT
 while :; do sleep 1; done

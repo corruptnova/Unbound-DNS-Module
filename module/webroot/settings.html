@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Unbound Settings</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="settings-page">
+  <header class="top">
+    <a class="btn small-btn back" href="index.html" id="back-link">‹ Back</a>
+    <h1>Settings</h1>
+  </header>
+
+  <main>
+    <div id="apply-error" class="notice bad" role="alert" hidden></div>
+
+    <form id="settings-form" autocomplete="off">
+      <section class="card" aria-labelledby="res-title">
+        <h2 id="res-title">Resolver</h2>
+        <div class="choices" role="radiogroup" aria-labelledby="res-title">
+          <label class="choice"><input type="radio" name="RESOLVER" value="recursive">
+            <span><b>Recursive</b><span class="muted small block">Unbound asks the root, TLD and authoritative servers itself. No DNS company sees all your lookups.</span></span></label>
+          <label class="choice"><input type="radio" name="RESOLVER" value="cloudflare">
+            <span><b>Cloudflare</b><span class="muted small block">1.1.1.1 over DNS-over-TLS. No filtering.</span></span></label>
+          <label class="choice"><input type="radio" name="RESOLVER" value="quad9">
+            <span><b>Quad9</b><span class="muted small block">9.9.9.9 over DNS-over-TLS. Blocks known malicious domains.</span></span></label>
+          <label class="choice"><input type="radio" name="RESOLVER" value="controld">
+            <span><b>ControlD free</b><span class="muted small block">Unfiltered resolver (p0) over DNS-over-TLS.</span></span></label>
+          <label class="choice"><input type="radio" name="RESOLVER" value="custom">
+            <span><b>Custom servers</b><span class="muted small block">Your own DNS-over-TLS servers.</span></span></label>
+        </div>
+        <div id="custom-servers" class="stack" hidden>
+          <label for="forwarders">One server per line: <code>address tls-name</code>, port optional (<code>address@853</code>)</label>
+          <textarea id="forwarders" rows="3" spellcheck="false" autocapitalize="off"
+            placeholder="9.9.9.9 dns.quad9.net&#10;2620:fe::fe dns.quad9.net"></textarea>
+        </div>
+        <p class="muted small">With a forwarder, your network no longer sees your lookups, but that provider sees all of them. DNSSEC is still checked on the phone.</p>
+      </section>
+
+      <section class="card" aria-labelledby="cache-title">
+        <h2 id="cache-title">Cache</h2>
+        <label class="field">Cache size
+          <select name="CACHE_SIZE">
+            <option value="small">Small (about 14 MB)</option>
+            <option value="medium">Medium (about 28 MB)</option>
+            <option value="large">Large (about 100 MB)</option>
+          </select>
+        </label>
+        <div class="row gap wrap">
+          <label class="field grow">Minimum cache time (s)
+            <input type="number" name="CACHE_MIN_TTL" min="0" max="3600" inputmode="numeric"></label>
+          <label class="field grow">Maximum cache time (s)
+            <input type="number" name="CACHE_MAX_TTL" min="60" max="604800" inputmode="numeric"></label>
+        </div>
+        <label class="toggle"><span>Refresh popular names before they expire<span class="muted small block">Prefetch: faster answers, a little more traffic.</span></span>
+          <span class="switch"><input type="checkbox" name="PREFETCH"><span></span></span></label>
+        <label class="toggle"><span>Answer from expired cache on slow links<span class="muted small block">Serve stale (RFC 8767) when an answer takes over 1.8 s.</span></span>
+          <span class="switch"><input type="checkbox" name="SERVE_EXPIRED"><span></span></span></label>
+      </section>
+
+      <section class="card" aria-labelledby="perf-title">
+        <h2 id="perf-title">Performance</h2>
+        <label class="field">Threads
+          <select name="THREADS">
+            <option value="1">1 (right for most phones)</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="card" aria-labelledby="dnssec-title">
+        <h2 id="dnssec-title">DNSSEC</h2>
+        <label class="toggle"><span>Validate DNSSEC<span class="muted small block">Rejects forged answers for signed domains.</span></span>
+          <span class="switch"><input type="checkbox" name="DNSSEC"><span></span></span></label>
+        <p id="dnssec-off-warning" class="notice warn" hidden>With validation off, forged answers for signed domains are no longer caught.</p>
+        <label class="toggle"><span>Log failures but don't block<span class="muted small block">Permissive mode, for troubleshooting.</span></span>
+          <span class="switch"><input type="checkbox" name="DNSSEC_PERMISSIVE"><span></span></span></label>
+        <div class="anchor">
+          <div class="item-title">Root trust anchor</div>
+          <div class="muted small" id="anchor-status">…</div>
+          <div class="row gap wrap">
+            <button type="button" class="btn" id="anchor-update">Update trust anchor</button>
+            <span id="anchor-reset-slot"></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="privacy-title">
+        <h2 id="privacy-title">Privacy and security</h2>
+        <label class="toggle"><span>Query-name minimisation<span class="muted small block">Each server only sees the part of the name it needs.</span></span>
+          <span class="switch"><input type="checkbox" name="QNAME_MIN"><span></span></span></label>
+        <label class="toggle"><span>DNS-rebinding protection<span class="muted small block">Drops private addresses in public answers. Can break services that use them on purpose.</span></span>
+          <span class="switch"><input type="checkbox" name="REBIND_PROTECT"><span></span></span></label>
+      </section>
+
+      <section class="card" aria-labelledby="net-title">
+        <h2 id="net-title">Network and blocking</h2>
+        <label class="toggle"><span>Use IPv6 to reach DNS servers<span class="muted small block">Turn off if IPv6 on your network is broken.</span></span>
+          <span class="switch"><input type="checkbox" name="UPSTREAM_IPV6"><span></span></span></label>
+        <label class="field">Blocked names answer
+          <select name="BLOCK_ANSWER">
+            <option value="nxdomain">"Doesn't exist" (NXDOMAIN)</option>
+            <option value="null">0.0.0.0 and ::</option>
+          </select>
+        </label>
+        <label class="field">Log level
+          <select name="LOG_LEVEL">
+            <option value="0">0: errors only</option>
+            <option value="1">1: operational (default)</option>
+            <option value="2">2: detailed</option>
+            <option value="3">3: per query (debugging; records names)</option>
+          </select>
+        </label>
+      </section>
+    </form>
+
+    <section class="card" aria-labelledby="adv-title">
+      <details id="advanced">
+        <summary><h2 id="adv-title">Advanced: custom.conf</h2></summary>
+        <p class="muted small">Your own Unbound settings, read after everything above. If Unbound rejects them, the previous file comes back.</p>
+        <textarea id="custom-conf" rows="12" spellcheck="false" autocapitalize="off" class="mono"></textarea>
+        <div class="row gap wrap">
+          <button type="button" class="btn" id="custom-save">Save custom.conf</button>
+          <span id="defaults-slot"></span>
+        </div>
+      </details>
+    </section>
+  </main>
+
+  <div class="apply-bar" id="apply-bar" hidden>
+    <span id="apply-summary" class="small"></span>
+    <button type="button" class="btn" id="discard-btn">Discard</button>
+    <button type="button" class="btn primary" id="apply-btn">Apply</button>
+  </div>
+
+  <div class="overlay" id="busy" hidden>
+    <div class="overlay-box" role="status" aria-live="polite">
+      <div class="spinner" aria-hidden="true"></div>
+      <div id="busy-text">Restarting Unbound…</div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script src="common.js"></script>
+  <script src="settings.js"></script>
+</body>
+</html>

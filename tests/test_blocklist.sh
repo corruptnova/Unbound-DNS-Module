@@ -73,6 +73,22 @@ local-zone: "tracker.com." always_nxdomain
 local-zone: "ok.tracker.com." transparent' "$out"
 assert_eq "allow count" "1" "$(cat "$TMP/count")"
 
+# Own blocks (U) beat list exceptions and the allowlist when more specific;
+# an exact tie goes to the allowlist; covered own blocks are dropped.
+out="$(merge 'A example.com\nU ads.example.com\nU example.com\nB tracker.net\nU sub.tracker.net\nU own.org\nA x.own.org\n')"
+assert_eq "own block precedence" 'server:
+local-zone: "ads.example.com." always_nxdomain
+local-zone: "tracker.net." always_nxdomain
+local-zone: "own.org." always_nxdomain
+local-zone: "x.own.org." transparent' "$out"
+assert_eq "own block count" "3" "$(cat "$TMP/count")"
+
+# Blocked names can answer 0.0.0.0 / :: instead of NXDOMAIN.
+printf 'B a.example\nU b.example\n' | lists_merge "$TMP/conf" "$TMP/count" always_null
+assert_eq "always_null block type" 'server:
+local-zone: "a.example." always_null
+local-zone: "b.example." always_null' "$(cat "$TMP/conf")"
+
 out="$(merge '')"
 assert_eq "empty merge" "server:" "$out"
 assert_eq "empty count" "0" "$(cat "$TMP/count")"

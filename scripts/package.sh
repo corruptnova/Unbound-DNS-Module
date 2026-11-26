@@ -28,14 +28,14 @@ sed -e "s|@VERSION@|$VERSION|" -e "s|@VERSION_CODE@|$CODE|" \
 licenses_done=0
 for abi in $ABIS; do
     src="$ROOT_DIR/out/$abi"
-    for f in unbound unbound-control curl BUILDINFO; do
+    for f in unbound unbound-control unbound-anchor curl BUILDINFO; do
         [ -f "$src/$f" ] || die "missing $src/$f; run scripts/build.sh $abi first"
     done
     grep -q "^unbound=$UNBOUND_VERSION " "$src/BUILDINFO" \
         || die "out/$abi was built for another Unbound version than versions.env"
     mkdir -p "$STAGE/bin/$abi"
-    cp "$src/unbound" "$src/unbound-control" "$src/curl" "$src/BUILDINFO" "$STAGE/bin/$abi/"
-    chmod 0755 "$STAGE/bin/$abi/unbound" "$STAGE/bin/$abi/unbound-control" "$STAGE/bin/$abi/curl"
+    cp "$src/unbound" "$src/unbound-control" "$src/unbound-anchor" "$src/curl" "$src/BUILDINFO" "$STAGE/bin/$abi/"
+    chmod 0755 "$STAGE/bin/$abi/unbound" "$STAGE/bin/$abi/unbound-control" "$STAGE/bin/$abi/unbound-anchor" "$STAGE/bin/$abi/curl"
     if [ "$licenses_done" = 0 ] && [ -d "$src/licenses" ]; then
         mkdir -p "$STAGE/licenses"
         cp "$src"/licenses/* "$STAGE/licenses/"

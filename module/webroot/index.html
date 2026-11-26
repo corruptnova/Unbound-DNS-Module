@@ -11,6 +11,7 @@
   <header class="top">
     <h1>Unbound DNS</h1>
     <span class="muted" id="module-version"></span>
+    <a class="btn small-btn push-right" href="settings.html" id="settings-link">Settings</a>
   </header>
 
   <main>
@@ -61,6 +62,16 @@
       <p class="muted small" id="update-status"></p>
     </section>
 
+    <section class="card" aria-labelledby="own-title">
+      <h2 id="own-title">My blocklist</h2>
+      <p class="muted small">Always blocked, including subdomains. <code>*.example.com</code> works too.</p>
+      <ul class="items" id="own"></ul>
+      <form id="own-form" class="row gap" autocomplete="off">
+        <input id="own-input" type="text" inputmode="url" placeholder="ads.example.com" aria-label="Domain to block" autocapitalize="off" spellcheck="false">
+        <button type="submit" class="btn">Block</button>
+      </form>
+    </section>
+
     <section class="card" aria-labelledby="allow-title">
       <h2 id="allow-title">Allowlist</h2>
       <p class="muted small">Never blocked, including their subdomains.</p>
@@ -89,6 +100,7 @@
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script src="common.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

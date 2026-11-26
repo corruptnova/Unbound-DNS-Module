@@ -37,6 +37,28 @@ server:
 EOF
 printf 'B ads.example.com\nA ok.ads.example.com\nB other.test\n' | lists_merge "$T/blocklist.conf" "$T/count"
 
+# Render options.conf exactly as the module does, for every resolver and a
+# spread of settings, and let real Unbound check each result.
+export UNBOUND_DATA="$T" UNBOUND_MODDIR="$REPO_DIR/module"
+. "$LIB_DIR/common.sh"
+. "$LIB_DIR/settings.sh"
+for b in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt; do
+    [ -s "$b" ] && cp "$b" "$T/ca.pem" && break
+done
+render() { : > "$SETTINGS"; for kv in "$@"; do echo "$kv" >> "$SETTINGS"; done; write_options_conf; }
+if [ -n "$CHECK" ]; then
+    printf '192.0.2.53#dns.example\n2001:db8::53@8853#dns.example\n' > "$T/forwarders.list"
+    for r in cloudflare quad9 controld custom; do
+        render "RESOLVER=$r"
+        assert_ok "unbound-checkconf with resolver $r" "$CHECK" "$T/unbound.conf"
+    done
+    render CACHE_SIZE=large THREADS=4 DNSSEC=0 REBIND_PROTECT=1 QNAME_MIN=0 LOG_LEVEL=3 \
+        CACHE_MIN_TTL=300 CACHE_MAX_TTL=7200 PREFETCH=0 SERVE_EXPIRED=0
+    assert_ok "unbound-checkconf with many settings" "$CHECK" "$T/unbound.conf"
+    render DNSSEC_PERMISSIVE=1 CACHE_SIZE=small THREADS=2
+    assert_ok "unbound-checkconf with permissive DNSSEC" "$CHECK" "$T/unbound.conf"
+fi
+render
 if [ -n "$CHECK" ]; then
     assert_ok "unbound-checkconf" "$CHECK" "$T/unbound.conf"
 fi
@@ -69,6 +91,12 @@ fi
 assert_ok "reload_keep_cache over unix socket" "$UCTL" -c "$T/control.conf" reload_keep_cache
 assert_contains "still blocking after reload" "status: NXDOMAIN" "$(q ads.example.com A)"
 assert_contains "identity hidden" "status: REFUSED" "$(q id.server CH TXT)"
+
+# "Blocked names answer 0.0.0.0" setting.
+printf 'U null.example\n' | lists_merge "$T/blocklist.conf" "$T/count" always_null
+"$UCTL" -c "$T/control.conf" reload_keep_cache >/dev/null 2>&1
+assert_eq "always_null answers 0.0.0.0" "0.0.0.0" "$(q +short null.example A)"
+assert_eq "always_null answers ::" "::" "$(q +short null.example AAAA)"
 assert_ok "log written" test -s "$T/var/unbound.log"
 
 done_testing

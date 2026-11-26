@@ -16,6 +16,7 @@ UNBOUND_MODDIR="${UNBOUND_MODDIR:-$(cd "${0%/*}" && pwd)}"
 . "$UNBOUND_MODDIR/lib/common.sh"
 . "$LIB_DIR/lists.sh"
 . "$LIB_DIR/redirect.sh"
+. "$LIB_DIR/settings.sh"
 . "$LIB_DIR/daemon.sh"
 umask 022
 
@@ -32,10 +33,22 @@ usage: ctl.sh <command> [args]
   list-enable ID 0|1         disable / enable a blocklist
   allow-add DOMAIN           never block DOMAIN (and its subdomains)
   allow-remove DOMAIN
+  block-add DOMAIN           always block DOMAIN and its subdomains (*.DOMAIN works too)
+  block-remove DOMAIN
   update-lists [--force] [--bg]
                              download due (or all) lists and rebuild
   rebuild                    rebuild from cached lists and reload Unbound
   set refresh_hours N        list refresh interval, 1-168 hours
+  settings                   JSON of Unbound settings and trust anchor state
+  settings-apply KEY=VALUE...
+                             change settings, restart Unbound, roll back if it
+                             does not come up (FORWARDERS=addr[@port]#name,...)
+  settings-reset             all settings back to defaults
+  custom-get | custom-set BASE64
+                             read / replace custom.conf (rolled back on error)
+  anchor-update | anchor-reset
+                             refresh the DNSSEC root trust anchor / restore
+                             the built-in one
   log [module|unbound] [N]   last N log lines (default 200)
   diag                       troubleshooting report (paste it into a bug report)
 
@@ -77,6 +90,8 @@ status_json() {
         "$(daemon_running && echo true || echo false)" "$(json_num "$_pid")"
     printf '"redirect_enabled":%s,"redirect_active":%s,"ipv6":"%s",' \
         "$(json_bool "$(setting_get REDIRECT 1)")" "$(json_bool $_act)" "$(json_esc "${_v6:-}")"
+    printf '"resolver":"%s","resolver_label":"%s",' "$(json_esc "$(opt RESOLVER)")" \
+        "$(json_esc "$(resolver_label "$(opt RESOLVER)")")"
     printf '"nat64_bypass_v4":"%s","nat64_bypass_v6":"%s",' \
         "$(json_esc "$(cat "$RUN/nat64.iptables" 2>/dev/null)")" \
         "$(json_esc "$(cat "$RUN/nat64.ip6tables" 2>/dev/null)")"
@@ -117,28 +132,224 @@ lists_json() {
             "$(json_num "$(grep -c '^B ' "$RUN/local.count" 2>/dev/null)")"
     done
     rm -f "$RUN/local.count"
-    printf '],"allow":['
-    _first=1
-    [ -f "$ALLOW" ] && while read -r _d; do
-        [ -n "$_d" ] || continue
-        [ $_first = 1 ] || printf ','
-        _first=0
-        printf '"%s"' "$(json_esc "$_d")"
-    done < "$ALLOW"
-    printf '],"local_dir":"%s"}\n' "$(json_esc "$LOCAL_LISTS")"
+    printf '],"allow":'
+    json_lines "$ALLOW"
+    printf ',"block":'
+    json_lines "$OWN_BLOCK"
+    printf ',"local_dir":"%s"}\n' "$(json_esc "$LOCAL_LISTS")"
+}
+
+
+
+# --- applying settings safely --------------------------------------------------
+
+APPLY_FILES="$SETTINGS $FORWARDERS $DATA/custom.conf $VAR/root.key"
+
+backup_files() {
+    rm -rf "$RUN/backup"; mkdir -p "$RUN/backup"
+    for _f in $APPLY_FILES; do
+        if [ -f "$_f" ]; then cp -p "$_f" "$RUN/backup/${_f##*/}"
+        else : > "$RUN/backup/${_f##*/}.absent"; fi
+    done
+}
+
+restore_files() {
+    for _f in $APPLY_FILES; do
+        _b="$RUN/backup/${_f##*/}"
+        if [ -f "$_b.absent" ]; then rm -f "$_f"
+        elif [ -f "$_b" ]; then cp -p "$_b" "$_f"; fi
+    done
+}
+
+# regenerate: rebuild generated config from the stored settings.
+regenerate() {
+    write_runtime_conf
+    write_options_conf
+    [ "${_rebuild:-0}" = 1 ] && run_locked update 300 lists_rebuild noreload
+    return 0
+}
+
+# restart_and_wait: restart Unbound through the supervisor and wait until it
+# answers (with the redirect back, if enabled). Fails early if it cannot start.
+restart_and_wait() {
+    _mark="$(wc -l < "$MODLOG" 2>/dev/null)"
+    touch "$RUN/restart"
+    stop_unbound
+    wake_daemon
+    _t=0
+    while [ "$_t" -lt "${UNBOUND_APPLY_TIMEOUT:-30}" ]; do
+        if unbound_running && ubctl status >/dev/null 2>&1; then
+            if [ "$(setting_get REDIRECT 1)" != 1 ] || redirect_active; then return 0; fi
+        fi
+        if tail -n +"$(( ${_mark:-0} + 1 ))" "$MODLOG" 2>/dev/null \
+                | grep -q 'unbound: failed to start\|unbound: not ready'; then
+            return 1
+        fi
+        sleep 1; _t=$((_t + 1))
+    done
+    return 1
+}
+
+# apply_with_rollback WHAT: the caller has backed up and changed files.
+# Prints a JSON result; on failure the previous files are restored.
+apply_with_rollback() {
+    regenerate
+    if ! daemon_running; then
+        rm -rf "$RUN/backup"
+        log "settings: saved ($1); used when Unbound next starts"
+        printf '{"ok":true,"applied":false}\n'
+        return 0
+    fi
+    if restart_and_wait; then
+        rm -rf "$RUN/backup"
+        log "settings: applied ($1)"
+        printf '{"ok":true,"applied":true}\n'
+        return 0
+    fi
+    _err="$(grep -v '^[[:space:]]*$' "$VAR/unbound.stderr" 2>/dev/null | tail -n 2 | tr '\n' ' ')"
+    log "settings: $1 failed: ${_err:-Unbound did not answer}; restoring the previous settings"
+    restore_files
+    regenerate
+    restart_and_wait || log "settings: Unbound did not come back after restoring; see the log"
+    rm -rf "$RUN/backup"
+    printf '{"ok":false,"error":"%s"}\n' "$(json_esc "Not applied: ${_err:-Unbound did not answer with these settings}. The previous settings are back.")"
+    return 1
+}
+
+# settings-apply KEY=VALUE...: validate everything first, write nothing on error.
+cmd_settings_apply() {
+    [ $# -gt 0 ] || die "usage: settings-apply KEY=VALUE..."
+    _fw=""; _fwset=0; _newres=""; _newmin=""; _newmax=""
+    for _kv in "$@"; do
+        case "$_kv" in *=*) ;; *) die "expected KEY=VALUE, got: $_kv" ;; esac
+        _k="${_kv%%=*}"; _v="${_kv#*=}"
+        no_newline "$_v" || die "invalid value for $_k"
+        if [ "$_k" = FORWARDERS ]; then
+            _fwset=1; _n=0
+            _list="$(printf '%s' "$_v" | tr ',' '\n')"
+            while IFS= read -r _f; do
+                [ -n "$_f" ] || continue
+                valid_forwarder "$_f" || die "invalid server: $_f (use address#tls-name, e.g. 9.9.9.9#dns.quad9.net)"
+                _n=$((_n + 1))
+            done <<FWLIST
+$_list
+FWLIST
+            [ "$_n" -le 8 ] || die "at most 8 servers"
+            _fw="$_v"
+            continue
+        fi
+        is_setting_key "$_k" || die "unknown setting: $_k"
+        setting_valid "$_k" "$_v" || die "invalid value for $_k: $_v"
+        case "$_k" in
+            RESOLVER) _newres="$_v" ;;
+            CACHE_MIN_TTL) _newmin="$_v" ;;
+            CACHE_MAX_TTL) _newmax="$_v" ;;
+        esac
+    done
+    [ "${_newmin:-$(opt CACHE_MIN_TTL)}" -le "${_newmax:-$(opt CACHE_MAX_TTL)}" ] \
+        || die "the minimum cache time must not be above the maximum"
+    if [ "${_newres:-$(opt RESOLVER)}" = custom ]; then
+        if [ "$_fwset" = 1 ]; then [ -n "$_fw" ] || die "add at least one server"
+        else [ -s "$FORWARDERS" ] || die "add at least one server"; fi
+    fi
+    run_locked apply 120 _do_settings_apply "$@"
+}
+
+_do_settings_apply() {
+    _oldblock="$(opt BLOCK_ANSWER)"
+    backup_files
+    for _kv in "$@"; do
+        _k="${_kv%%=*}"; _v="${_kv#*=}"
+        if [ "$_k" = FORWARDERS ]; then
+            printf '%s\n' "$_v" | tr ',' '\n' | grep -v '^$' > "$FORWARDERS.tmp"
+            mv -f "$FORWARDERS.tmp" "$FORWARDERS"
+            continue
+        fi
+        if [ "$_v" = "$(setting_default "$_k")" ]; then setting_set "$_k" ""
+        else setting_set "$_k" "$_v"; fi
+    done
+    _rebuild=0
+    [ "$(opt BLOCK_ANSWER)" != "$_oldblock" ] && _rebuild=1
+    apply_with_rollback "$*"
+}
+
+_do_settings_reset() {
+    _oldblock="$(opt BLOCK_ANSWER)"
+    backup_files
+    for _k in $SETTING_KEYS; do setting_set "$_k" ""; done
+    rm -f "$FORWARDERS"
+    _rebuild=0
+    [ "$(opt BLOCK_ANSWER)" != "$_oldblock" ] && _rebuild=1
+    apply_with_rollback "reset to defaults"
+}
+
+cmd_custom_set() {
+    [ -n "${1:-}" ] || die "usage: custom-set BASE64"
+    [ "${#1}" -le 90000 ] || die "custom.conf is too large (64 KB at most)"
+    printf '%s' "$1" | grep -Eq '^[A-Za-z0-9+/=]+$' || die "invalid encoding"
+    printf '%s' "$1" | base64 -d > "$RUN/custom.new" 2>/dev/null || die "invalid encoding"
+    [ "$(wc -c < "$RUN/custom.new")" -le 65536 ] || die "custom.conf is too large (64 KB at most)"
+    [ "$(tr -d '\000' < "$RUN/custom.new" | wc -c)" = "$(wc -c < "$RUN/custom.new")" ] \
+        || die "custom.conf must be text"
+    run_locked apply 120 _do_custom_set
+}
+
+_do_custom_set() {
+    backup_files
+    cp -f "$RUN/custom.new" "$DATA/custom.conf"
+    rm -f "$RUN/custom.new"
+    chown 0:"$UB_UID" "$DATA/custom.conf" 2>/dev/null
+    chmod 0640 "$DATA/custom.conf"
+    _rebuild=0
+    apply_with_rollback "custom.conf"
+}
+
+# anchor-update: ask IANA for the current root trust anchor. unbound-anchor
+# resolves through the running Unbound (port 5335), so it works whether or
+# not the redirect is on.
+cmd_anchor_update() {
+    unbound_running || die "Unbound is not running"
+    cp -f "$VAR/root.key" "$RUN/anchor.key"
+    printf 'server:\n    do-not-query-localhost: no\nforward-zone:\n    name: "."\n    forward-addr: 127.0.0.1@%s\n' \
+        "$UB_PORT" > "$RUN/anchor.conf"
+    _out="$("$BIN/unbound-anchor" -v -a "$RUN/anchor.key" -C "$RUN/anchor.conf" 2>&1)"
+    case "$_out" in
+        *"success: the anchor is ok"*)
+            log "trust anchor: up to date"
+            printf '{"ok":true,"changed":false}\n'
+            return 0 ;;
+        *"success:"*) ;;
+        *)
+            _e="$(printf '%s\n' "$_out" | grep -v '^[[:space:]]*$' | tail -n 1)"
+            log "trust anchor: update failed: $_e"
+            printf '{"ok":false,"error":"%s"}\n' "$(json_esc "Update failed: ${_e:-no answer from unbound-anchor}")"
+            return 1 ;;
+    esac
+    run_locked apply 120 _do_anchor_install "$RUN/anchor.key" "trust anchor updated"
+}
+
+# _do_anchor_install FILE WHAT
+_do_anchor_install() {
+    backup_files
+    cp -f "$1" "$VAR/root.key"
+    chown "$UB_UID:$UB_UID" "$VAR/root.key" 2>/dev/null
+    chmod 0644 "$VAR/root.key"
+    _rebuild=0
+    apply_with_rollback "$2"
 }
 
 remove_and_rebuild() { source_remove "$1" && lists_rebuild; }
 
-# allow_edit add|remove DOMAIN, then rebuild (caller holds the update lock).
-allow_edit() {
-    if [ "$1" = add ]; then
-        { cat "$ALLOW" 2>/dev/null; echo "$2"; } | LC_ALL=C sort -u > "$ALLOW.tmp"
+# list_edit FILE LABEL add|remove DOMAIN, then rebuild (caller holds the
+# update lock). Used for the allowlist and the own blocklist.
+list_edit() {
+    if [ "$3" = add ]; then
+        { cat "$1" 2>/dev/null; echo "$4"; } | LC_ALL=C sort -u > "$1.tmp"
     else
-        grep -vx -- "$2" "$ALLOW" > "$ALLOW.tmp" 2>/dev/null
+        grep -vx -- "$4" "$1" > "$1.tmp" 2>/dev/null
     fi
-    mv -f "$ALLOW.tmp" "$ALLOW"
-    log "allowlist: $1 $2"
+    mv -f "$1.tmp" "$1"
+    log "$2: $3 $4"
     lists_rebuild
 }
 
@@ -155,6 +366,7 @@ cmd_diag() {
     status_json
     _sec "config in use"
     grep -E '^[[:space:]]*(interface|port|access-control|do-ip[46]|username|chroot):' "$CONF" "$DATA/runtime.conf" 2>/dev/null
+    grep -vE '^[[:space:]]*(#|$)' "$OPTIONS_CONF" 2>/dev/null | sed 's/^/options.conf: /'
     grep -vE '^[[:space:]]*(#|$)' "$DATA/custom.conf" 2>/dev/null | sed 's/^/custom.conf: /'
     _sec "listening sockets (port $UB_PORT)"
     _hex="$(printf '%04X' "$UB_PORT")"
@@ -272,7 +484,11 @@ case "$cmd" in
         fi ;;
     allow-add|allow-remove)
         _d="$(normalise_domain "${1:-}")" || die "invalid domain name"
-        run_locked update 300 allow_edit "${cmd#allow-}" "$_d" ;;
+        run_locked update 300 list_edit "$ALLOW" allowlist "${cmd#allow-}" "$_d" ;;
+    block-add|block-remove)
+        _d="$(normalise_domain "${1:-}")" \
+            || die "invalid domain name (use example.com or *.example.com; partial patterns are not possible)"
+        run_locked update 300 list_edit "$OWN_BLOCK" "own blocklist" "${cmd#block-}" "$_d" ;;
     update-lists)
         _force=0; _bg=0
         for _a in "$@"; do
@@ -316,6 +532,13 @@ case "$cmd" in
         cmd_stop >/dev/null
         private_dns_restore ;;
     diag) cmd_diag ;;
+    settings) settings_json ;;
+    settings-apply) cmd_settings_apply "$@" ;;
+    settings-reset) run_locked apply 120 _do_settings_reset ;;
+    custom-get) cat "$DATA/custom.conf" 2>/dev/null ;;
+    custom-set) cmd_custom_set "${1:-}" ;;
+    anchor-update) cmd_anchor_update ;;
+    anchor-reset) run_locked apply 120 _do_anchor_install "$MODDIR/conf/root.key" "trust anchor reset to built-in" ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 2 ;;
 esac

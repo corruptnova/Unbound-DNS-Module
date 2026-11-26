@@ -7,14 +7,15 @@ lists_parse() {
         && mv -f "$2.tmp" "$2"
 }
 
-# lists_merge OUTCONF COUNTFILE < tagged lines
-# Writes Unbound local-zone config and the blocked-zone count.
+# lists_merge OUTCONF COUNTFILE [BLOCKTYPE] < tagged lines
+# Writes Unbound local-zone config and the blocked-zone count. BLOCKTYPE is
+# always_nxdomain (default) or always_null (answer 0.0.0.0 / ::).
 lists_merge() {
     LC_ALL=C awk '{ n = split($2, l, "."); r = l[n]
                     for (i = n - 1; i >= 1; i--) r = r "!" l[i]
                     print r " " $1 }' \
         | LC_ALL=C sort -u \
-        | LC_ALL=C awk -v countfile="$2" -f "$LIB_DIR/merge.awk" > "$1"
+        | LC_ALL=C awk -v countfile="$2" -v blocktype="${3:-always_nxdomain}" -f "$LIB_DIR/merge.awk" > "$1"
 }
 
 # --- sources: lists/sources.list is "id<TAB>enabled<TAB>name<TAB>url" -------
@@ -113,14 +114,21 @@ _all_entries() {
     done
     rm -f "$RUN/local.parsed"
     [ -f "$ALLOW" ] && sed 's/^/A /' "$ALLOW"
+    [ -f "$OWN_BLOCK" ] && sed 's/^/U /' "$OWN_BLOCK"
 }
 
-# lists_rebuild: regenerate blocklist.conf and reload Unbound (cache kept).
+block_type() {
+    if [ "$(setting_get BLOCK_ANSWER nxdomain)" = null ]; then echo always_null; else echo always_nxdomain; fi
+}
+
+# lists_rebuild [noreload]: regenerate blocklist.conf and reload Unbound
+# (cache kept). "noreload" when the caller restarts Unbound anyway.
+# shellcheck disable=SC2120  # ctl.sh passes "noreload"
 lists_rebuild() {
     _new="$BLOCK_CONF.new"
-    _all_entries | lists_merge "$_new" "$RUN/count.new" || { rm -f "$_new"; return 1; }
+    _all_entries | lists_merge "$_new" "$RUN/count.new" "$(block_type)" || { rm -f "$_new"; return 1; }
     # Belt and braces: every line must be one we generate.
-    if grep -Ev '^(server:|local-zone: "[a-z0-9_.-]+\." (always_nxdomain|transparent))$' "$_new" | grep -q .; then
+    if grep -Ev '^(server:|local-zone: "[a-z0-9_.-]+\." (always_nxdomain|always_null|transparent))$' "$_new" | grep -q .; then
         log "lists: generated config failed validation; keeping the old one"
         rm -f "$_new"; return 1
     fi
@@ -128,7 +136,7 @@ lists_rebuild() {
     mv -f "$_new" "$BLOCK_CONF"
     mv -f "$RUN/count.new" "$BLOCK_COUNT"
     log "lists: blocklist rebuilt ($(cat "$BLOCK_COUNT") zones)"
-    if unbound_running; then
+    if [ "${1:-}" != noreload ] && unbound_running; then
         ubctl reload_keep_cache >/dev/null 2>&1 || ubctl reload >/dev/null 2>&1 \
             || { log "lists: reload failed"; return 1; }
     fi

@@ -157,6 +157,38 @@ ctl allow-add doubleclick.net >/dev/null
 wait_until 15 "allowlisted domain resolves again" resolves doubleclick.net
 resolves www.wikipedia.org && ok "unlisted domain still resolves" || bad "unlisted domain"
 
+say "own blocklist"
+ctl block-add '*.example.org' >/dev/null
+wait_until 15 "own block applies (example.org)" unresolvable example.org
+ctl block-remove example.org >/dev/null
+wait_until 20 "removing it unblocks" resolves example.org
+
+say "encrypted forwarding (Quad9, DNS-over-TLS) and back"
+out="$(ctl settings-apply RESOLVER=quad9)"
+echo "$out" | grep -q '"applied":true' && ok "switched to Quad9" || bad "switch to Quad9: $out"
+q0="$(ctl status | sed -n 's/.*"queries":\([0-9]*\).*/\1/p')"
+wait_until 30 "resolves through Quad9 over TLS" resolves www.wikimedia.org
+q1="$(ctl status | sed -n 's/.*"queries":\([0-9]*\).*/\1/p')"
+[ "${q1:-0}" -gt "${q0:-0}" ] && ok "Unbound answered ($q0 -> $q1)" || bad "no queries counted ($q0 -> $q1)"
+dot="$(sh_dev "cat /proc/net/tcp /proc/net/tcp6" | awk '$3 ~ /:0355$/ && $8 == 3003' | wc -l)"
+[ "$dot" -gt 0 ] && ok "Unbound has TLS connections to port 853" || bad "no connection to port 853 from Unbound"
+out="$(ctl settings-apply RESOLVER=recursive)"
+echo "$out" | grep -q '"applied":true' && ok "back to recursive" || bad "back to recursive: $out"
+wait_until 30 "resolves recursively again" resolves www.mozilla.org
+
+say "trust anchor"
+out="$(ctl anchor-update)"
+echo "     $out"
+echo "$out" | grep -q '"ok":true' && ok "trust anchor checked with IANA" || bad "trust anchor update: $out"
+
+say "settings rollback"
+b64="$(printf 'server:\n    this-is-not-an-option: yes\n' | base64 | tr -d '\n')"
+out="$(ctl custom-set "$b64")"
+echo "$out" | grep -q '"ok":false' && ok "bad custom.conf refused" || bad "bad custom.conf: $out"
+wait_until 30 "Unbound running again after rollback" status_has '"running":true'
+sh_dev "grep -q this-is-not-an-option /data/adb/unbound/custom.conf" && bad "custom.conf not restored" || ok "custom.conf restored"
+wait_until 20 "redirect back after rollback" redirect_active
+
 say "fail-safe"
 sh_dev "kill -9 $pid"
 wait_until 30 "Unbound restarted after being killed" sh -c "ctl_pid=\$(adb shell /data/adb/ksu/bin/busybox sh $MOD/ctl.sh status | tr -d '\r' | sed -n 's/.*\"pid\":\([0-9]*\).*/\1/p'); [ -n \"\$ctl_pid\" ] && [ \"\$ctl_pid\" != 0 ] && [ \"\$ctl_pid\" != $pid ]"

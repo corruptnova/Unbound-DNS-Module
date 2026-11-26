@@ -1,9 +1,5 @@
 'use strict';
 
-// Everything goes through the module's control script. Arguments are always
-// single-quoted for the shell; ctl.sh validates them again.
-const CTL = 'sh /data/adb/modules/unbound-dns/ctl.sh';
-
 const PRESETS = [
   { name: 'OISD small', url: 'https://small.oisd.nl/',
     note: 'Ads and trackers, tuned to almost never break anything.' },
@@ -19,73 +15,7 @@ const PRESETS = [
     note: 'Classic unified hosts file.' },
 ];
 
-const $ = (id) => document.getElementById(id);
-const nf = new Intl.NumberFormat();
 let state = { status: null, lists: null, logKind: 'module', busy: false };
-let cbSeq = 0;
-
-function shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
-
-function exec(cmd) {
-  return new Promise((resolve, reject) => {
-    if (typeof window.ksu === 'undefined' || typeof window.ksu.exec !== 'function') {
-      reject(new Error('Open this page from the KernelSU manager.'));
-      return;
-    }
-    const cb = `__unboundCb${Date.now()}_${cbSeq++}`;
-    window[cb] = (errno, stdout, stderr) => {
-      delete window[cb];
-      resolve({ errno, stdout: stdout || '', stderr: stderr || '' });
-    };
-    try {
-      window.ksu.exec(cmd, '{}', cb);
-    } catch (e) {
-      delete window[cb];
-      reject(e);
-    }
-  });
-}
-
-async function ctl(...args) {
-  const r = await exec(`${CTL} ${args.map(shq).join(' ')}`);
-  if (r.errno !== 0) {
-    const msg = (r.stderr || r.stdout || 'Command failed').trim().split('\n').pop();
-    throw new Error(msg.replace(/^error:\s*/, ''));
-  }
-  return r.stdout.trim();
-}
-
-async function ctlJson(...args) { return JSON.parse(await ctl(...args)); }
-
-let toastTimer = null;
-function toast(msg, bad = false) {
-  const t = $('toast');
-  t.textContent = msg;
-  t.className = bad ? 'toast bad' : 'toast';
-  t.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, bad ? 5000 : 2500);
-}
-
-function el(tag, props = {}, ...children) {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(props)) {
-    if (k === 'class') e.className = v;
-    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
-    else if (v !== undefined && v !== null && v !== false) e.setAttribute(k, v === true ? '' : v);
-  }
-  for (const c of children) if (c !== null && c !== undefined) e.append(c);
-  return e;
-}
-
-function ago(ts) {
-  if (!ts) return 'never';
-  const s = Math.max(0, Math.floor(Date.now() / 1000) - ts);
-  if (s < 90) return 'just now';
-  if (s < 5400) return `${Math.round(s / 60)} min ago`;
-  if (s < 129600) return `${Math.round(s / 3600)} h ago`;
-  return `${Math.round(s / 86400)} days ago`;
-}
 
 function duration(s) {
   if (!s) return '—';
@@ -114,7 +44,7 @@ function renderStatus(s) {
   } else if (s.redirect_active) {
     dot.className = 'dot ok';
     text.textContent = 'Protecting all DNS';
-    $('status-sub').textContent = 'Every app\'s DNS goes to Unbound on this phone.';
+    $('status-sub').textContent = `Every app's DNS goes to Unbound on this phone. Resolver: ${s.resolver_label || 'Recursive'}.`;
   } else {
     dot.className = 'dot warn';
     text.textContent = 'Redirect off';
@@ -210,29 +140,6 @@ function sourceItem(src) {
     confirmButton(`Remove ${src.name}`, () => act(() => ctl('list-remove', src.id), `${src.name} removed`)));
 }
 
-// WebView may not show confirm() dialogs, so ask in place: first tap arms
-// the button, a second tap within 4 s does it.
-function confirmButton(label, onConfirm) {
-  const b = el('button', { type: 'button', class: 'icon-btn', 'aria-label': label, title: label }, '✕');
-  let timer = null;
-  b.addEventListener('click', () => {
-    if (timer) {
-      clearTimeout(timer);
-      timer = null;
-      onConfirm();
-      return;
-    }
-    b.textContent = 'Remove?';
-    b.classList.add('armed');
-    timer = setTimeout(() => {
-      timer = null;
-      b.textContent = '✕';
-      b.classList.remove('armed');
-    }, 4000);
-  });
-  return b;
-}
-
 function renderLists(l) {
   const items = [
     ...l.sources.map(sourceItem),
@@ -249,6 +156,13 @@ function renderLists(l) {
     el('button', {
       type: 'button', class: 'icon-btn', 'aria-label': `Remove ${d} from allowlist`, title: 'Remove',
       onclick: () => act(() => ctl('allow-remove', d), `${d} removed from allowlist`),
+    }, '✕'))));
+
+  $('own').replaceChildren(...(l.block || []).map((d) => el('li', {},
+    el('div', { class: 'item-main' }, el('div', { class: 'item-title' }, d)),
+    el('button', {
+      type: 'button', class: 'icon-btn', 'aria-label': `Remove ${d} from my blocklist`, title: 'Remove',
+      onclick: () => act(() => ctl('block-remove', d), `${d} is no longer blocked by you`),
     }, '✕'))));
 
   const have = new Set(l.sources.map((s) => s.url));
@@ -321,6 +235,17 @@ async function addList(ev) {
   }, `Added ${name || url}; downloading…`);
 }
 
+async function addOwnBlock(ev) {
+  ev.preventDefault();
+  const input = $('own-input');
+  const d = input.value.trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+  if (!d) return;
+  await act(async () => {
+    await ctl('block-add', d);
+    input.value = '';
+  }, `${d.replace(/^\*\./, '')} and its subdomains are blocked`);
+}
+
 async function addAllow(ev) {
   ev.preventDefault();
   const input = $('allow-input');
@@ -355,6 +280,7 @@ function init() {
   $('preset').addEventListener('change', onPresetChange);
   $('add-form').addEventListener('submit', addList);
   $('allow-form').addEventListener('submit', addAllow);
+  $('own-form').addEventListener('submit', addOwnBlock);
   $('update-btn').addEventListener('click', () => act(() => ctl('update-lists', '--force', '--bg'), 'Updating all lists…'));
   $('refresh').addEventListener('change', (e) => act(() => ctl('set', 'refresh_hours', e.target.value), 'Refresh interval saved'));
   $('log-details').addEventListener('toggle', (e) => { if (e.target.open) refreshLog(); });

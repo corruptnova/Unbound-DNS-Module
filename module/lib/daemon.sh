@@ -13,7 +13,12 @@ write_runtime_conf() {
         if grep -Eq '^0{31}1 .* lo$' "$_if6" 2>/dev/null; then
             echo "    interface: ::1@$UB_PORT"
         fi
-        if [ -f "$_if6" ]; then echo "    do-ip6: yes"; else echo "    do-ip6: no"; fi
+        # Reach servers over IPv6 only if the phone has IPv6 and it is wanted.
+        if [ -f "$_if6" ] && [ "$(opt UPSTREAM_IPV6)" = 1 ]; then
+            echo "    do-ip6: yes"
+        else
+            echo "    do-ip6: no"
+        fi
     } > "$DATA/runtime.conf"
 }
 
@@ -28,9 +33,12 @@ setup_data() {
     [ -s "$VAR/root.key" ] || cp "$MODDIR/conf/root.key" "$VAR/root.key"
     [ -f "$SOURCES" ] || : > "$SOURCES"
     [ -f "$ALLOW" ] || : > "$ALLOW"
+    [ -f "$OWN_BLOCK" ] || : > "$OWN_BLOCK"
     [ -f "$BLOCK_CONF" ] || printf 'server:\n' > "$BLOCK_CONF"
     [ -f "$BLOCK_COUNT" ] || echo 0 > "$BLOCK_COUNT"
     write_runtime_conf
+    install_ca_bundle
+    write_options_conf
 
     # Unbound chroots here and runs as uid/gid $UB_UID: it may read the
     # config files and write only var/. Everything else stays root-only.

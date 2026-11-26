@@ -11,7 +11,7 @@ printf 'id=unbound-dns\nversion=v1.26.2-r1\n' > "$MOD/module.prop"
 
 export STUB_STATE="$TMP/state"
 export UNBOUND_MODDIR="$MOD" UNBOUND_DATA="$TMP/data" UNBOUND_APPDATA="$TMP/appdata"
-export UNBOUND_NO_BUSYBOX_REEXEC=1 UNBOUND_POLL=1 UNBOUND_START_TIMEOUT=5
+export UNBOUND_NO_BUSYBOX_REEXEC=1 UNBOUND_POLL=1 UNBOUND_START_TIMEOUT=5 UNBOUND_APPLY_TIMEOUT=10
 export UNBOUND_IF_INET6="$TMP/if_inet6" UNBOUND_CA_BUNDLE="$TMP/ca.pem"
 export PATH="$TESTS_DIR/stubs:$PATH"
 mkdir -p "$STUB_STATE/www" "$STUB_STATE/settings" "$TMP/appdata/com.android.captiveportallogin"
@@ -113,6 +113,28 @@ assert_ok "enable list" ctl list-enable "$id2" 1
 assert_ok "remove list" ctl list-remove "$id1"
 assert_not_contains "removed list gone" "ads.example.com" "$(cat "$D/blocklist.conf")"
 
+# Own blocklist: domain + subdomains, "*." accepted, patterns rejected.
+assert_ok "block-add wildcard form" ctl block-add "*.Own-Block.Example.net"
+assert_eq "own block stored normalised" "own-block.example.net" "$(cat "$D/lists/block.list")"
+assert_contains "own block applied" 'local-zone: "own-block.example.net." always_nxdomain' "$(cat "$D/blocklist.conf")"
+assert_contains "own block in lists json" '"block":["own-block.example.net"]' "$(ctl lists)"
+for bad in "ads*.example.com" "*tracker*" "a.com;reboot" '$(id).com' "nodot" "*." "a.com
+b.com"; do
+    assert_fails "reject own block: $bad" ctl block-add "$bad"
+done
+assert_eq "own blocklist untouched by bad input" "own-block.example.net" "$(cat "$D/lists/block.list")"
+# Allowlist on the same name wins; own block under an allowed parent wins.
+ctl allow-add own-block.example.net >/dev/null
+assert_not_contains "exact tie goes to the allowlist" '"own-block.example.net." always' "$(cat "$D/blocklist.conf")"
+ctl allow-remove own-block.example.net >/dev/null
+ctl allow-add example.org >/dev/null
+ctl block-add ads.example.org >/dev/null
+assert_contains "own block beats allowed parent" '"ads.example.org." always_nxdomain' "$(cat "$D/blocklist.conf")"
+ctl allow-remove example.org >/dev/null
+assert_ok "block-remove" ctl block-remove own-block.example.net
+assert_eq "own block removed" "ads.example.org" "$(cat "$D/lists/block.list")"
+ctl block-remove ads.example.org >/dev/null
+
 mkdir -p "$D/lists/local"
 printf 'local-block.example\n' > "$D/lists/local/mine.txt"
 ctl rebuild
@@ -198,6 +220,98 @@ assert_not_contains "no bypass rule without string match" "ipv4only" "$(nat ipta
 assert_contains "status reports missing bypass" '"nat64_bypass_v6":"unsupported"' "$(ctl status)"
 ctl stop >/dev/null
 rm -f "$STUB_STATE/iptables.nostring" "$STUB_STATE/ip6tables.nostring"
+
+# --- settings: validation (nothing written on bad input) ----------------------------
+json="$(ctl settings)"
+assert_json "settings json" "$json"
+assert_contains "default resolver" '"RESOLVER":"recursive"' "$json"
+assert_contains "anchor keys listed" '"id":20326' "$json"
+before_settings="$(cat "$D/settings.conf")"
+for bad in "RESOLVER=mullvad" "CACHE_SIZE=huge" "THREADS=9" "THREADS=1;id" "CACHE_MIN_TTL=-1" \
+           "LOG_LEVEL=" "NOPE=1" "DNSSEC=yes" "RESOLVER=custom" "FORWARDERS=1.2.3.4" \
+           "FORWARDERS=1.2.3.4#a b" 'FORWARDERS=$(id)#x.com' "FORWARDERS=1.2.3.4#x.com;reboot" \
+           "PREFETCH"; do
+    assert_fails "reject setting: $bad" ctl settings-apply "$bad"
+done
+assert_fails "min ttl above max rejected" ctl settings-apply CACHE_MIN_TTL=600 CACHE_MAX_TTL=300
+assert_fails "one bad value rejects all" ctl settings-apply CACHE_SIZE=large THREADS=99
+assert_eq "settings untouched by bad input" "$before_settings" "$(cat "$D/settings.conf")"
+[ -f "$D/forwarders.list" ] && fail "no forwarders written on bad input" || pass
+
+# --- settings: rendering without a running Unbound (installer path) ------------------
+assert_contains "apply without daemon only saves" '"applied":false' "$(ctl settings-apply RESOLVER=quad9)"
+opts="$(cat "$D/options.conf")"
+assert_contains "quad9 forward zone" 'forward-tls-upstream: yes' "$opts"
+assert_contains "quad9 server" 'forward-addr: 9.9.9.9@853#dns.quad9.net' "$opts"
+assert_contains "quad9 ipv6 server" 'forward-addr: 2620:fe::fe@853#dns.quad9.net' "$opts"
+assert_contains "ca bundle in chroot" "tls-cert-bundle: \"$D/ca.pem\"" "$opts"
+[ -s "$D/ca.pem" ] && pass || fail "ca.pem installed"
+assert_contains "status shows resolver" '"resolver":"quad9"' "$(ctl status)"
+ctl settings-apply RESOLVER=controld >/dev/null
+assert_contains "controld server" 'forward-addr: 76.76.2.0@853#p0.freedns.controld.com' "$(cat "$D/options.conf")"
+ctl settings-apply RESOLVER=cloudflare >/dev/null
+assert_contains "cloudflare server" 'forward-addr: 1.1.1.1@853#cloudflare-dns.com' "$(cat "$D/options.conf")"
+ctl settings-apply "RESOLVER=custom" "FORWARDERS=192.0.2.1#dns.example,2001:db8::1@8853#dns.example" >/dev/null
+assert_eq "custom servers stored" "192.0.2.1#dns.example
+2001:db8::1@8853#dns.example" "$(cat "$D/forwarders.list")"
+assert_contains "custom server rendered" 'forward-addr: 2001:db8::1@8853#dns.example' "$(cat "$D/options.conf")"
+ctl settings-apply RESOLVER=recursive >/dev/null
+assert_not_contains "recursive has no forward zone" 'forward-zone' "$(cat "$D/options.conf")"
+
+ctl settings-apply CACHE_SIZE=large THREADS=3 DNSSEC=0 REBIND_PROTECT=1 QNAME_MIN=0 LOG_LEVEL=2 \
+    CACHE_MIN_TTL=60 CACHE_MAX_TTL=3600 PREFETCH=0 SERVE_EXPIRED=0 UPSTREAM_IPV6=0 >/dev/null
+opts="$(cat "$D/options.conf")"
+for want in "msg-cache-size: 32m" "rrset-cache-size: 64m" "num-threads: 3" "msg-cache-slabs: 4" \
+            'module-config: "iterator"' "private-address: 192.168.0.0/16" "qname-minimisation: no" \
+            "verbosity: 2" "cache-min-ttl: 60" "cache-max-ttl: 3600" "prefetch: no" "serve-expired: no"; do
+    assert_contains "renders $want" "$want" "$opts"
+done
+assert_contains "ipv6 upstream off" "do-ip6: no" "$(cat "$D/runtime.conf")"
+ctl settings-apply DNSSEC=1 DNSSEC_PERMISSIVE=1 >/dev/null
+assert_contains "permissive dnssec" "val-permissive-mode: yes" "$(cat "$D/options.conf")"
+ctl block-add null-answer.example >/dev/null
+ctl settings-apply BLOCK_ANSWER=null >/dev/null
+assert_contains "block answer 0.0.0.0" '"null-answer.example." always_null' "$(cat "$D/blocklist.conf")"
+ctl block-remove null-answer.example >/dev/null
+ctl settings-reset >/dev/null
+assert_eq "reset restores defaults" "$(ctl settings | grep -o '"settings":{[^}]*}' | sed 's/"settings"//')" \
+    "$(ctl settings | grep -o '"defaults":{[^}]*}' | sed 's/"defaults"//')"
+[ -f "$D/forwarders.list" ] && fail "reset removes custom servers" || pass
+assert_contains "reset rebuilds nxdomain blocks" "always_nxdomain" "$(cat "$D/blocklist.conf")"
+
+# --- settings: applied to a running Unbound, rolled back when it fails ------------
+STUB_UNBOUND_FAIL_IF='cache-max-ttl: 999' sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
+wait_for 10 jump_present
+assert_contains "apply restarts unbound" '"applied":true' "$(ctl settings-apply CACHE_SIZE=small)"
+out="$(ctl settings-apply CACHE_MAX_TTL=999)"
+assert_contains "bad apply reported" '"ok":false' "$out"
+assert_contains "bad apply shows unbound's error" "value out of range" "$out"
+assert_not_contains "setting rolled back" "CACHE_MAX_TTL=999" "$(cat "$D/settings.conf")"
+assert_contains "earlier setting kept" "CACHE_SIZE=small" "$(cat "$D/settings.conf")"
+wait_for 10 jump_present && pass || fail "unbound and redirect back after rollback"
+
+printf 'server:\n    # my addition\n' > "$TMP/custom.txt"
+assert_contains "custom-set applies" '"applied":true' "$(ctl custom-set "$(base64 < "$TMP/custom.txt" | tr -d '\n')")"
+assert_eq "custom-get returns it" "$(cat "$TMP/custom.txt")" "$(ctl custom-get)"
+printf 'server:\n    BROKEN: yes\n' > "$TMP/broken.txt"
+out="$(ctl custom-set "$(base64 < "$TMP/broken.txt" | tr -d '\n')")"
+assert_contains "broken custom.conf rejected" '"ok":false' "$out"
+assert_eq "custom.conf restored" "$(cat "$TMP/custom.txt")" "$(cat "$D/custom.conf")"
+assert_fails "custom-set rejects bad encoding" ctl custom-set 'not base64!'
+
+# --- trust anchor -----------------------------------------------------------------------
+assert_contains "anchor up to date" '"changed":false' "$(ctl anchor-update)"
+touch "$STUB_STATE/anchor.fail"
+assert_contains "anchor failure reported" "no address" "$(ctl anchor-update)"
+rm -f "$STUB_STATE/anchor.fail"
+touch "$STUB_STATE/anchor.update"
+assert_contains "anchor updated" '"applied":true' "$(ctl anchor-update)"
+assert_contains "new anchor installed" "99999" "$(cat "$D/var/root.key")"
+rm -f "$STUB_STATE/anchor.update"
+assert_contains "anchor reset" '"applied":true' "$(ctl anchor-reset)"
+assert_eq "built-in anchor restored" "$(cat "$MOD/conf/root.key")" "$(cat "$D/var/root.key")"
+ctl stop >/dev/null
+ctl settings-reset >/dev/null
 
 # --- module disabled in the manager -> daemon stops and restores ------------------
 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &

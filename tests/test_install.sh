@@ -2,7 +2,7 @@
 # customize.sh / uninstall.sh as the root manager runs them.
 . "${TESTS_DIR:-$(dirname "$0")}/lib.sh"
 
-export UNBOUND_DATA="$TMP/data" UNBOUND_NO_BUSYBOX_REEXEC=1
+export UNBOUND_DATA="$TMP/data" UNBOUND_NO_BUSYBOX_REEXEC=1 UNBOUND_INSTALL_TIMEOUT=2
 export STUB_STATE="$TMP/state" PATH="$TESTS_DIR/stubs:$PATH"
 mkdir -p "$STUB_STATE"
 
@@ -17,7 +17,7 @@ stage() {
     rm -rf "$MODPATH"; cp -R "$REPO_DIR/module" "$MODPATH"
     for abi in arm64-v8a armeabi-v7a x86_64; do
         mkdir -p "$MODPATH/bin/$abi"
-        for b in unbound unbound-control curl; do
+        for b in unbound unbound-control unbound-anchor curl; do
             printf '#!/bin/sh\necho %s-%s\n' "$abi" "$b" > "$MODPATH/bin/$abi/$b"
             # Some managers' unzip drops the execute bit (seen with FinaSU).
             chmod 0644 "$MODPATH/bin/$abi/$b"
@@ -47,6 +47,41 @@ assert_contains "API abort message" "API 26" "$(cat "$TMP/ui.log")"
 stage
 ARCH=riscv64 API=34
 ( . "$MODPATH/customize.sh" ) && fail "unknown arch must abort" || pass
+
+# --- resolver choice with the volume keys -----------------------------------------
+resolver_now() { sed -n 's/^RESOLVER=//p' "$UNBOUND_DATA/settings.conf" 2>/dev/null; }
+
+# Fresh install, Vol+ twice then Vol-: Recursive -> Cloudflare -> Quad9, chosen.
+rm -rf "$UNBOUND_DATA"
+stage; ARCH=arm64 API=34; : > "$TMP/ui.log"
+printf 'up\nrelease\nup\ndown\n' > "$STUB_STATE/events"
+( . "$MODPATH/customize.sh" ) && pass || fail "customize with key presses"
+assert_eq "vol keys chose quad9" "quad9" "$(resolver_now)"
+assert_contains "choice confirmed" "Resolver: Quad9" "$(cat "$TMP/ui.log")"
+
+# Update, no key pressed: the current choice is kept, not reset to recursive.
+stage; : > "$TMP/ui.log"; : > "$STUB_STATE/events"
+UNBOUND_MODDIR="$MODPATH" sh "$MODPATH/ctl.sh" settings-apply RESOLVER=controld >/dev/null
+( . "$MODPATH/customize.sh" ) && pass || fail "customize timing out"
+assert_eq "update keeps controld" "controld" "$(resolver_now)"
+assert_contains "timeout message" "Keeping ControlD" "$(cat "$TMP/ui.log")"
+
+# Fresh install, no key pressed: recursive.
+rm -rf "$UNBOUND_DATA"
+stage; : > "$TMP/ui.log"; : > "$STUB_STATE/events"
+( . "$MODPATH/customize.sh" ) && pass || fail "customize fresh timeout"
+assert_eq "fresh install defaults to recursive" "" "$(resolver_now)"
+assert_contains "recursive kept" "Keeping Recursive" "$(cat "$TMP/ui.log")"
+
+# Vol+ moved to an option but nothing chosen: still the default.
+stage; : > "$TMP/ui.log"; printf 'up\n' > "$STUB_STATE/events"
+( . "$MODPATH/customize.sh" ) && pass || fail "customize browse then timeout"
+assert_eq "browsing alone does not choose" "" "$(resolver_now)"
+
+# No getevent (e.g. a manager without input access): no question asked.
+stage; : > "$TMP/ui.log"
+( PATH=/usr/bin:/bin; . "$MODPATH/customize.sh" ) && pass || fail "customize without getevent"
+assert_not_contains "no prompt without getevent" "Vol+" "$(cat "$TMP/ui.log")"
 
 # A zip missing one binary for the device's ABI is refused.
 stage

@@ -47,6 +47,7 @@ const env = {
   UNBOUND_NO_BUSYBOX_REEXEC: '1',
   UNBOUND_POLL: '1',
   UNBOUND_IF_INET6: path.join(tmp, 'if_inet6'),
+  UNBOUND_APPLY_TIMEOUT: '10',
   UNBOUND_CA_BUNDLE: path.join(tmp, 'ca.pem'),
 };
 
@@ -149,17 +150,96 @@ function check(name, ok, detail = '') {
         await page.waitForFunction(() => document.getElementById('log').textContent.includes('Unbound DNS module diagnostics'), null, { timeout: 15000 });
         check('diagnostics shown', (await page.textContent('#log')).includes('== redirect rules'));
         await page.click('#log-details summary');
+
+        // My blocklist.
+        await page.fill('#own-input', '*.Tracker.Example.net');
+        await page.press('#own-input', 'Enter');
+        await page.waitForFunction(() => document.getElementById('own').textContent.includes('tracker.example.net'), null, { timeout: 10000 });
+        check('own blocklist entry added', true);
+        check('own block command quoted', executed.some((c) => c.endsWith("'block-add' '*.Tracker.Example.net'")));
+        await page.fill('#own-input', 'ads*.example.com');
+        await page.press('#own-input', 'Enter');
+        await page.waitForFunction(() => document.getElementById('toast').textContent.includes('partial patterns'), null, { timeout: 10000 });
+        check('partial wildcard rejected with explanation', true);
       } else {
         await page.waitForFunction(() => document.getElementById('sources').textContent.includes('HaGeZi Pro'), null, { timeout: 20000 });
       }
 
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
       check(`no horizontal scroll (${scheme})`, !overflow);
-      check(`no page errors (${scheme})`, errors.length === 0, errors.join('; '));
       if (SHOTS) {
         fs.mkdirSync(SHOTS, { recursive: true });
         await page.screenshot({ path: path.join(SHOTS, `webui-${scheme}.png`), fullPage: true });
       }
+
+      // Settings page.
+      await page.click('#settings-link');
+      await page.waitForFunction(() => document.querySelector('input[name=RESOLVER]:checked') !== null, null, { timeout: 15000 });
+      const data = env.UNBOUND_DATA;
+      const clearToast = () => page.evaluate(() => { document.getElementById('toast').textContent = ''; });
+      const settingsFile = () => (fs.existsSync(path.join(data, 'settings.conf')) ? fs.readFileSync(path.join(data, 'settings.conf'), 'utf8') : '');
+      if (scheme === 'light') {
+        check('settings page loads current resolver', (await page.inputValue('input[name=RESOLVER]:checked')) === 'recursive');
+        check('apply bar hidden without changes', await page.isHidden('#apply-bar'));
+        await page.check('input[name=RESOLVER][value=quad9]');
+        check('apply bar appears on change', await page.isVisible('#apply-bar'));
+        await clearToast();
+        await page.click('#apply-btn');
+        await page.waitForFunction(() => document.getElementById('toast').textContent === 'Applied', null, { timeout: 30000 });
+        check('quad9 applied', settingsFile().includes('RESOLVER=quad9'));
+        check('quad9 rendered', fs.readFileSync(path.join(data, 'options.conf'), 'utf8').includes('9.9.9.9@853#dns.quad9.net'));
+
+        await page.check('input[name=RESOLVER][value=custom]');
+        check('custom server box shown', await page.isVisible('#forwarders'));
+        await page.fill('#forwarders', '1.2.3.4');
+        await page.click('#apply-btn');
+        await page.waitForSelector('#apply-error:not([hidden])', { timeout: 15000 });
+        check('server without TLS name rejected', (await page.textContent('#apply-error')).includes('invalid server'));
+        check('rejected change not saved', settingsFile().includes('RESOLVER=quad9'));
+        await page.check('input[name=RESOLVER][value=custom]');
+        await page.fill('#forwarders', '9.9.9.9 dns.quad9.net\n2620:fe::fe dns.quad9.net');
+        await clearToast();
+        await page.click('#apply-btn');
+        await page.waitForFunction(() => document.getElementById('toast').textContent === 'Applied', null, { timeout: 30000 });
+        check('custom servers stored', fs.readFileSync(path.join(data, 'forwarders.list'), 'utf8') === '9.9.9.9#dns.quad9.net\n2620:fe::fe#dns.quad9.net\n');
+
+        await page.uncheck('input[name=DNSSEC]');
+        check('dnssec-off warning shown', await page.isVisible('#dnssec-off-warning'));
+        check('permissive disabled without validation', await page.isDisabled('input[name=DNSSEC_PERMISSIVE]'));
+        await page.click('#discard-btn');
+        check('discard restores the form', await page.isChecked('input[name=DNSSEC]'));
+
+        await page.click('#advanced summary');
+        await page.waitForFunction(() => document.getElementById('custom-conf').value.includes('Your own Unbound settings'), null, { timeout: 10000 });
+        const customBefore = fs.readFileSync(path.join(data, 'custom.conf'), 'utf8');
+        await page.fill('#custom-conf', 'server:\n    BROKEN: yes\n');
+        await page.click('#custom-save');
+        await page.waitForSelector('#apply-error:not([hidden])', { timeout: 40000 });
+        check('broken custom.conf rolled back', (await page.textContent('#apply-error')).includes('previous settings are back'));
+        check('custom.conf file restored', fs.readFileSync(path.join(data, 'custom.conf'), 'utf8') === customBefore);
+
+        await clearToast();
+        await page.click('#anchor-update');
+        await page.waitForFunction(() => document.getElementById('toast').textContent.includes('up to date'), null, { timeout: 20000 });
+        check('trust anchor check', true);
+        check('anchor keys listed', (await page.textContent('#anchor-status')).includes('20326'));
+
+        const restore = page.locator('button[aria-label="Restore all defaults"]');
+        await restore.click();
+        check('restore asks first', (await restore.textContent()) === 'Tap again to restore');
+        await clearToast();
+        await restore.click();
+        await page.waitForFunction(() => document.getElementById('toast').textContent.includes('defaults'), null, { timeout: 30000 });
+        check('defaults restored', !settingsFile().includes('RESOLVER='));
+      }
+      const overflowS = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+      check(`settings: no horizontal scroll (${scheme})`, !overflowS);
+      if (SHOTS) {
+        await page.screenshot({ path: path.join(SHOTS, `settings-${scheme}.png`), fullPage: true });
+      }
+      await page.click('#back-link');
+      await page.waitForSelector('#status-text');
+      check(`no page errors (${scheme})`, errors.length === 0, errors.join('; '));
       await page.close();
     }
   } finally {

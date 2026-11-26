@@ -14,6 +14,7 @@ CACHE="$LISTS/cache"
 LOCAL_LISTS="$LISTS/local"
 SOURCES="$LISTS/sources.list"
 ALLOW="$LISTS/allow.list"
+OWN_BLOCK="$LISTS/block.list"
 SETTINGS="$DATA/settings.conf"
 CONF="$DATA/unbound.conf"
 CTRL_CONF="$DATA/control.conf"
@@ -73,12 +74,28 @@ valid_id() { printf '%s\n' "$1" | grep -Eq '^[0-9a-f]{12}$' && no_newline "$1"; 
 # Uses the blocklist parser so the WebUI and lists agree on what is valid.
 normalise_domain() {
     no_newline "$1" || return 1
-    case "$1" in *[!A-Za-z0-9._-]*) return 1 ;; esac
-    _d="$(printf '%s\n' "$1" | LC_ALL=C awk -v bom= -f "$LIB_DIR/blocklist.awk")"
+    # "*.example.com" means the same as "example.com" (subdomains are always
+    # included); any other "*" is a pattern Unbound cannot match.
+    _in="${1#\*.}"
+    case "$_in" in *[!A-Za-z0-9._-]*) return 1 ;; esac
+    _d="$(printf '%s\n' "$_in" | LC_ALL=C awk -v bom= -f "$LIB_DIR/blocklist.awk")"
     case "$_d" in "B "*) printf '%s' "${_d#B }" ;; *) return 1 ;; esac
 }
 
 json_esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\000-\037'; }
+
+# json_lines FILE: the file's non-empty lines as a JSON array of strings.
+json_lines() {
+    printf '['
+    _jf=1
+    [ -f "$1" ] && while read -r _jl; do
+        [ -n "$_jl" ] || continue
+        [ $_jf = 1 ] || printf ','
+        _jf=0
+        printf '"%s"' "$(json_esc "$_jl")"
+    done < "$1"
+    printf ']'
+}
 
 json_bool() { if [ "$1" = 1 ] || [ "$1" = true ]; then printf true; else printf false; fi; }
 
