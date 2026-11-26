@@ -334,7 +334,7 @@ async function addAllow(ev) {
 
 async function refreshLog() {
   try {
-    const out = await ctl('log', state.logKind, '300');
+    const out = state.logKind === 'diag' ? await ctl('diag') : await ctl('log', state.logKind, '300');
     const pre = $('log');
     pre.textContent = out || '(empty)';
     pre.scrollTop = pre.scrollHeight;
@@ -357,6 +357,21 @@ function init() {
   $('refresh').addEventListener('change', (e) => act(() => ctl('set', 'refresh_hours', e.target.value), 'Refresh interval saved'));
   $('log-details').addEventListener('toggle', (e) => { if (e.target.open) refreshLog(); });
   $('log-refresh').addEventListener('click', refreshLog);
+  $('log-copy').addEventListener('click', async () => {
+    const text = $('log').textContent;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Copied');
+    } catch {
+      // Older WebViews: select the text so it can be copied by hand.
+      const r = document.createRange();
+      r.selectNodeContents($('log'));
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(r);
+      toast('Selected; long-press to copy');
+    }
+  });
   for (const b of document.querySelectorAll('[data-log]')) {
     b.addEventListener('click', () => {
       state.logKind = b.dataset.log;

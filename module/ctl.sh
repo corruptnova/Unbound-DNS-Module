@@ -37,6 +37,7 @@ usage: ctl.sh <command> [args]
   rebuild                    rebuild from cached lists and reload Unbound
   set refresh_hours N        list refresh interval, 1-168 hours
   log [module|unbound] [N]   last N log lines (default 200)
+  diag                       troubleshooting report (paste it into a bug report)
 
   setup | daemon | uninstall-cleanup   used by the module itself
 EOF
@@ -136,6 +137,49 @@ allow_edit() {
     mv -f "$ALLOW.tmp" "$ALLOW"
     log "allowlist: $1 $2"
     lists_rebuild
+}
+
+# diag: everything needed to see where DNS stops, as plain text.
+cmd_diag() {
+    _sec() { printf '\n== %s\n' "$1"; }
+    echo "Unbound DNS module diagnostics, $(date '+%Y-%m-%d %H:%M:%S %z')"
+    _sec "device"
+    echo "module $(module_version), unbound $(unbound_version)"
+    echo "android $(getprop ro.build.version.release 2>/dev/null) (sdk $(getprop ro.build.version.sdk 2>/dev/null)), $(getprop ro.product.model 2>/dev/null), abi $(getprop ro.product.cpu.abi 2>/dev/null)"
+    echo "kernel $(uname -r)"
+    for _m in ksu ap magisk; do [ -d "/data/adb/$_m" ] && echo "root manager dir: /data/adb/$_m"; done
+    _sec "status"
+    status_json
+    _sec "config in use"
+    grep -E '^[[:space:]]*(interface|port|access-control|do-ip[46]|username|chroot):' "$CONF" "$DATA/runtime.conf" 2>/dev/null
+    grep -vE '^[[:space:]]*(#|$)' "$DATA/custom.conf" 2>/dev/null | sed 's/^/custom.conf: /'
+    _sec "listening sockets (port $UB_PORT)"
+    _hex="$(printf '%04X' "$UB_PORT")"
+    for _f in /proc/net/udp /proc/net/udp6 /proc/net/tcp /proc/net/tcp6; do
+        grep -i ":$_hex " "$_f" 2>/dev/null | awk -v f="${_f##*/}" '{print f, $2, "uid", $8}'
+    done
+    _sec "redirect rules (packet counters)"
+    for _i in iptables ip6tables; do
+        echo "-- $_i nat"
+        "$_i" -w -t nat -L OUTPUT -v -n 2>&1 | head -n 6
+        "$_i" -w -t nat -L "$NAT_CHAIN" -v -n 2>&1
+        echo "-- $_i filter $DOT_CHAIN"
+        "$_i" -w -L "$DOT_CHAIN" -v -n 2>&1
+    done
+    _sec "networks and their DNS servers"
+    dumpsys connectivity 2>/dev/null | grep -oE 'ni\{[A-Z_]+[^}]*\}|InterfaceName: [^ ]+|DnsAddresses: \[[^]]*\]|PrivateDnsServerName: [^ ]+|UsePrivateDns: [a-z]+' | head -n 40
+    echo "private_dns_mode: $(settings get global private_dns_mode 2>/dev/null)"
+    _sec "unbound counters"
+    if unbound_running; then
+        ubctl stats_noreset 2>/dev/null | grep -E '^total\.(num\.queries|num\.cachehits|num\.cachemiss|requestlist\.(avg|max|exceeded))=|^unwanted\.|^num\.answer\.rcode\.|^num\.query\.(ipv6|tcp|udpout)'
+    else
+        echo "unbound not running"
+    fi
+    _sec "module log (last 40)"
+    tail -n 40 "$MODLOG" 2>/dev/null
+    _sec "unbound log (last 40)"
+    tail -n 40 "$VAR/unbound.log" 2>/dev/null
+    tail -n 5 "$VAR/unbound.stderr" 2>/dev/null
 }
 
 cmd_redirect() {
@@ -265,6 +309,7 @@ case "$cmd" in
     uninstall-cleanup)
         cmd_stop >/dev/null
         private_dns_restore ;;
+    diag) cmd_diag ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 2 ;;
 esac

@@ -145,6 +145,9 @@ function check(name, ok, detail = '') {
         await page.click('#log-details summary');
         await page.waitForFunction(() => document.getElementById('log').textContent.includes('lists: added'), null, { timeout: 10000 });
         check('log shows module log', true);
+        await page.click('[data-log="diag"]');
+        await page.waitForFunction(() => document.getElementById('log').textContent.includes('Unbound DNS module diagnostics'), null, { timeout: 15000 });
+        check('diagnostics shown', (await page.textContent('#log')).includes('== redirect rules'));
         await page.click('#log-details summary');
       } else {
         await page.waitForFunction(() => document.getElementById('sources').textContent.includes('HaGeZi Pro'), null, { timeout: 20000 });

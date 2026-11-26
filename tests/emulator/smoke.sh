@@ -111,6 +111,29 @@ q1="$(ctl status | sed -n 's/.*"queries":\([0-9]*\).*/\1/p')"
 [ "$q1" -gt "$q0" ] && ok "Unbound counted the queries ($q0 -> $q1)" || bad "query count did not grow ($q0 -> $q1)"
 ctl status | grep -q '"ipv6":"ok"' && ok "IPv6 DNS redirected" || echo "note: IPv6 NAT not available on this image"
 
+say "lookups from a real app's uid (apps, not root, are what users run)"
+# Run curl as an installed app's uid: getaddrinfo then goes through netd
+# exactly as for that app (permission checks, socket owned by the app uid).
+app_uid="$(sh_dev "pm list packages -U com.google.android.gms" | sed -n 's/.*uid:\([0-9]*\).*/\1/p' | head -n 1)"
+if [ -n "$app_uid" ]; then
+    sh_dev "cp $MOD/bin/curl /data/local/tmp/ubcurl && chmod 0755 /data/local/tmp/ubcurl"
+    app_lookup() {
+        # curl exit 6 = could not resolve; anything else means the name resolved.
+        rc="$(sh_dev "su $app_uid /data/local/tmp/ubcurl -sS -m 10 -o /dev/null http://$1/ 2>&1; echo rc=\$?" | sed -n 's/^rc=//p')"
+        echo "     app uid $app_uid lookup $1: curl exit $rc"
+        [ -n "$rc" ] && [ "$rc" != 6 ]
+    }
+    q0="$(ctl status | sed -n 's/.*"queries":\([0-9]*\).*/\1/p')"
+    wait_until 30 "app resolves www.example.com through Unbound" app_lookup www.example.com
+    wait_until 30 "app resolves a CNAME (www.wikipedia.org)" app_lookup www.wikipedia.org
+    q1="$(ctl status | sed -n 's/.*"queries":\([0-9]*\).*/\1/p')"
+    [ "$q1" -gt "$q0" ] && ok "Unbound counted the app's queries ($q0 -> $q1)" || bad "app queries did not reach Unbound ($q0 -> $q1)"
+else
+    bad "no app uid found to test with"
+fi
+say "diagnostics while running"
+ctl diag
+
 say "blocklist download over TLS on the device"
 ctl list-add https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts "StevenBlack" >/dev/null
 ctl update-lists && ok "list downloaded and applied" || bad "update-lists failed"
