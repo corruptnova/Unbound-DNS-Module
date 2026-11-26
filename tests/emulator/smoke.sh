@@ -45,7 +45,9 @@ net_diag() {
 # ping is only used to resolve a name the way apps do (getaddrinfo via netd).
 # The emulator cannot ping out, so ping always "fails"; "; true" keeps that
 # exit status from failing the pipeline under pipefail.
-resolves() { sh_dev "ping -c 1 -W 2 $1 2>&1; true" | grep -q "^PING $1"; }
+# ping prints the canonical name, e.g. "PING dyna.wikimedia.org (1.2.3.4)"
+# for www.wikipedia.org, so accept any name followed by an address.
+resolves() { sh_dev "ping -c 1 -W 2 $1 2>&1; true" | grep -qE '^PING [^ ]+ \([0-9a-fA-F.:]+\)'; }
 unresolvable() { sh_dev "ping -c 1 -W 2 $1 2>&1; true" | grep -qiE "unknown host|no address|name or service"; }
 status_has() { ctl status | grep -q "$1"; }
 redirect_active() { sh_dev "iptables -w -t nat -C OUTPUT -j UNBOUND_DNS && echo yes" | grep -q yes; }
@@ -104,6 +106,7 @@ root="$(sh_dev "readlink /proc/$pid/root")"
 say "resolution goes through Unbound"
 q0="$(ctl status | sed -n 's/.*"queries":\([0-9]*\).*/\1/p')"
 wait_until 30 "apps resolve www.wikipedia.org through the redirect" resolves www.wikipedia.org
+echo "     lookup: $(sh_dev "ping -c 1 -W 2 www.wikipedia.org 2>&1; true" | head -n 1)"
 q1="$(ctl status | sed -n 's/.*"queries":\([0-9]*\).*/\1/p')"
 [ "$q1" -gt "$q0" ] && ok "Unbound counted the queries ($q0 -> $q1)" || bad "query count did not grow ($q0 -> $q1)"
 ctl status | grep -q '"ipv6":"ok"' && ok "IPv6 DNS redirected" || echo "note: IPv6 NAT not available on this image"
