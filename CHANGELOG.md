@@ -3,6 +3,11 @@
 Notes for module revisions. Releases list the bundled versions on top of
 these notes.
 
+## v1.26.2-r7
+
+- When Unbound cannot start, its error stays visible in the WebUI while the
+  module retries, instead of briefly disappearing at each attempt.
+
 ## v1.26.2-r6
 
 - Query and cache statistics keep counting across Unbound restarts, list

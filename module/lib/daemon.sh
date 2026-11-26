@@ -96,10 +96,14 @@ start_unbound() {
         if ! alive "$_ub"; then
             wait "$_ub" 2>/dev/null
             log "unbound: failed to start: $(tail -n 3 "$VAR/unbound.stderr" | tr '\n' ' ')"
+            # Kept until a start succeeds: unbound.stderr is emptied at every
+            # retry, so status and rollback messages read this instead.
+            grep -v '^[[:space:]]*$' "$VAR/unbound.stderr" | tail -n 2 | tr '\n' ' ' > "$RUN/start_error"
             rm -f "$RUN/unbound.pid"
             return 1
         fi
         if ubctl status >/dev/null 2>&1; then
+            rm -f "$RUN/start_error"
             log "unbound: running (pid $_ub)"
             return 0
         fi

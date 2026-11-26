@@ -2,6 +2,7 @@
 # Fake unbound: fails like the real one on a config containing BROKEN,
 # otherwise "serves" until killed.
 if grep -q BROKEN "$UNBOUND_DATA/custom.conf" 2>/dev/null; then
+    sleep 1   # the real one takes a moment to read its config before failing
     echo "/data/adb/unbound/custom.conf:1: error: syntax error" >&2
     exit 1
 fi

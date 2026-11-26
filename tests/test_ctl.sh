@@ -219,6 +219,14 @@ wait_for 10 grep -q "unbound: failed to start" "$D/var/module.log" && pass || fa
 sleep 2
 jump_absent && pass || fail "no redirect while unbound cannot start"
 assert_contains "status shows error" "syntax error" "$(ctl status)"
+# The error must stay visible through the supervisor's retries, not vanish
+# while a new attempt is starting up.
+missing=0
+for i in $(seq 1 25); do
+    ctl status | grep -q '"error":"[^"]*syntax error' || missing=$((missing + 1))
+    sleep 0.4
+done
+assert_eq "start error stays visible during retries" "0" "$missing"
 # Fixing the config and asking for a restart retries at once, not after
 # the back-off.
 sleep 6

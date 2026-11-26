@@ -81,9 +81,9 @@ status_json() {
         _hits="$(json_num "$(printf '%s\n' "$_stats" | sed -n 's/^total\.num\.cachehits=//p')")"
         _up="$(printf '%s\n' "$_stats" | sed -n 's/^time\.up=\([0-9]*\).*/\1/p')"
         _mem="$(sed -n 's/^VmRSS:[[:space:]]*\([0-9]*\).*/\1/p' "/proc/$_pid/status" 2>/dev/null)"
-    else
-        _err="$(grep -v '^[[:space:]]*$' "$VAR/unbound.stderr" 2>/dev/null | tail -n 1)"
     fi
+    # The last failed start, kept through retries until a start succeeds.
+    _err="$(cat "$RUN/start_error" 2>/dev/null)"
     _act=0; redirect_active && _act=1
     _v6="$(cat "$RUN/redirect.v6" 2>/dev/null)"
     _pd="$(settings get global private_dns_mode 2>/dev/null)"
@@ -209,7 +209,7 @@ apply_with_rollback() {
         printf '{"ok":true,"applied":true}\n'
         return 0
     fi
-    _err="$(grep -v '^[[:space:]]*$' "$VAR/unbound.stderr" 2>/dev/null | tail -n 2 | tr '\n' ' ')"
+    _err="$(cat "$RUN/start_error" 2>/dev/null)"
     log "settings: $1 failed: ${_err:-Unbound did not answer}; restoring the previous settings"
     restore_files
     regenerate
