@@ -60,18 +60,22 @@ _chains_del() {
 }
 
 # redirect_apply: IPv4 must succeed; IPv6 is recorded as ok/unsupported.
+# IPv6 goes first so its status is known by the time the IPv4 jump (which
+# redirect_active looks for) appears.
 redirect_apply() {
-    if ! _chains_add iptables; then
-        _chains_del iptables
-        log "redirect: failed to install IPv4 rules"
-        return 1
-    fi
     if _chains_add ip6tables; then
         echo ok > "$RUN/redirect.v6"
     else
         _chains_del ip6tables
         echo unsupported > "$RUN/redirect.v6"
         log "redirect: IPv6 NAT unavailable on this kernel; IPv6 DNS is not redirected"
+    fi
+    if ! _chains_add iptables; then
+        _chains_del iptables
+        _chains_del ip6tables
+        rm -f "$RUN/redirect.v6"
+        log "redirect: failed to install IPv4 rules"
+        return 1
     fi
     log "redirect: on"
 }

@@ -57,6 +57,15 @@ assert_contains "blocked name is NXDOMAIN" "status: NXDOMAIN" "$(q ads.example.c
 assert_contains "blocked subdomain is NXDOMAIN" "status: NXDOMAIN" "$(q x.y.ads.example.com A)"
 assert_contains "other blocked zone" "status: NXDOMAIN" "$(q other.test AAAA)"
 assert_eq "allowlisted name under blocked parent resolves" "192.0.2.1" "$(q +short ok.ads.example.com A)"
+# The phone's redirect only rewrites the destination, so queries arrive from
+# the device's own Wi-Fi/mobile address, not 127.0.0.1. They must be served.
+SRC="$({ ip -4 addr show 2>/dev/null || busybox ip -4 addr show 2>/dev/null; } | awk '$1 == "inet" && $2 !~ /^127\./ { sub(/\/.*/, "", $2); print $2; exit }')"
+if [ -n "$SRC" ]; then
+    assert_eq "query from a non-loopback source ($SRC) is answered" "192.0.2.1" \
+        "$(q -b "$SRC" +short ok.ads.example.com A)"
+else
+    echo "note: no global IPv4 address; skipped the non-loopback source check"
+fi
 assert_ok "reload_keep_cache over unix socket" "$UCTL" -c "$T/control.conf" reload_keep_cache
 assert_contains "still blocking after reload" "status: NXDOMAIN" "$(q ads.example.com A)"
 assert_contains "identity hidden" "status: REFUSED" "$(q id.server CH TXT)"

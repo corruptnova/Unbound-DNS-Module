@@ -19,7 +19,8 @@ stage() {
         mkdir -p "$MODPATH/bin/$abi"
         for b in unbound unbound-control curl; do
             printf '#!/bin/sh\necho %s-%s\n' "$abi" "$b" > "$MODPATH/bin/$abi/$b"
-            chmod 0755 "$MODPATH/bin/$abi/$b"
+            # Some managers' unzip drops the execute bit (seen with FinaSU).
+            chmod 0644 "$MODPATH/bin/$abi/$b"
         done
     done
 }
@@ -46,6 +47,14 @@ assert_contains "API abort message" "API 26" "$(cat "$TMP/ui.log")"
 stage
 ARCH=riscv64 API=34
 ( . "$MODPATH/customize.sh" ) && fail "unknown arch must abort" || pass
+
+# A zip missing one binary for the device's ABI is refused.
+stage
+rm "$MODPATH/bin/arm64-v8a/curl"
+ARCH=arm64 API=34
+: > "$TMP/ui.log"
+( . "$MODPATH/customize.sh" ) && fail "missing binary must abort" || pass
+assert_contains "missing binary named" "no curl binary for arm64-v8a" "$(cat "$TMP/ui.log")"
 
 # uninstall.sh removes the data directory.
 stage

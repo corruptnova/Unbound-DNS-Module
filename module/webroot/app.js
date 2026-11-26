@@ -134,7 +134,8 @@ function renderStatus(s) {
       ['From cache', s.queries ? `${hit}%` : '—'],
       ['Memory', mem(s.memory_kb)],
       ['Uptime', duration(s.uptime)],
-      ['IPv6 DNS', !s.redirect_active ? '—' : (s.ipv6 === 'ok' ? 'Redirected' : 'Not redirected')],
+      ['IPv6 DNS', !s.redirect_active ? '—'
+        : ({ ok: 'Redirected', unsupported: 'Not redirected' }[s.ipv6] || '—')],
       ['Unbound', s.version || '—'],
     ].map(([k, v]) => el('div', {}, el('dt', {}, k), el('dd', {}, v))),
   );

@@ -12,7 +12,11 @@ case "$ARCH" in
     x64)   ABI=x86_64 ;;
     *)     abort "! Unsupported CPU architecture: $ARCH" ;;
 esac
-[ -x "$MODPATH/bin/$ABI/unbound" ] || abort "! This zip has no binaries for $ABI"
+# Only test that the files exist: whether unzip kept the execute bit depends
+# on the manager, and permissions are set just below anyway.
+for b in unbound unbound-control curl; do
+    [ -f "$MODPATH/bin/$ABI/$b" ] || abort "! This zip has no $b binary for $ABI"
+done
 
 ui_print "- Installing Unbound for $ABI"
 mv "$MODPATH/bin/$ABI"/* "$MODPATH/bin/"

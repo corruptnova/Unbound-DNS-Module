@@ -42,8 +42,11 @@ net_diag() {
     sh_dev "settings get global private_dns_mode" || true
 }
 
-resolves() { sh_dev "ping -c 1 -W 2 $1 2>&1" | grep -q "^PING $1"; }
-unresolvable() { sh_dev "ping -c 1 -W 2 $1 2>&1" | grep -qi "unknown host"; }
+# ping is only used to resolve a name the way apps do (getaddrinfo via netd).
+# The emulator cannot ping out, so ping always "fails"; "; true" keeps that
+# exit status from failing the pipeline under pipefail.
+resolves() { sh_dev "ping -c 1 -W 2 $1 2>&1; true" | grep -q "^PING $1"; }
+unresolvable() { sh_dev "ping -c 1 -W 2 $1 2>&1; true" | grep -qiE "unknown host|no address|name or service"; }
 status_has() { ctl status | grep -q "$1"; }
 redirect_active() { sh_dev "iptables -w -t nat -C OUTPUT -j UNBOUND_DNS && echo yes" | grep -q yes; }
 redirect_inactive() { ! redirect_active; }
