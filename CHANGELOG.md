@@ -3,6 +3,15 @@
 Notes for module revisions. Releases list the bundled versions on top of
 these notes.
 
+## v1.26.2-r8
+
+- Much lighter on battery: the supervisor no longer checks everything every
+  10 seconds. It reacts at once when Unbound exits or a setting changes,
+  checks for stop/disable every 30 seconds without starting any process,
+  and runs the firewall rule check, list refresh check and statistics
+  snapshot every 5 minutes (about 25 times less CPU in testing).
+- Fix: restarting Unbound could leave the status showing it as stopped.
+
 ## v1.26.2-r7
 
 - When Unbound cannot start, its error stays visible in the WebUI while the

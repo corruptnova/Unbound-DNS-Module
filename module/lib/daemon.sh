@@ -166,7 +166,11 @@ stop_unbound() {
         alive "$_ub" && kill -9 "$_ub" 2>/dev/null
     fi
     [ -n "$_ub" ] && wait "$_ub" 2>/dev/null
-    rm -f "$RUN/unbound.pid"
+    # Drop the pid file only if it is still the one we stopped: the
+    # supervisor reacts to the exit at once and may already have started a
+    # new Unbound and written its pid.
+    [ "$(unbound_pid)" = "$_ub" ] && rm -f "$RUN/unbound.pid"
+    return 0
 }
 
 # --- scheduled list refresh -----------------------------------------------------
@@ -193,6 +197,26 @@ rotate_logs() {
 module_off() { [ -f "$MODDIR/disable" ] || [ -f "$MODDIR/remove" ]; }
 
 # --- supervisor -------------------------------------------------------------------
+#
+# Event-driven so it costs next to nothing while the phone is awake:
+#   - Unbound is our child; when it exits, SIGCHLD wakes us at once.
+#   - ctl.sh (WebUI, Action button) sends SIGUSR1 after changing anything.
+#   - Every UNBOUND_POLL seconds (30) we look for stop/disable flags using
+#     shell builtins only, no extra processes.
+#   - Every UNBOUND_MAINT seconds (300) we do the heavier checks: the
+#     firewall rules are still there, list refresh due, statistics, logs.
+
+# uptime_now: whole seconds since boot in $_now, without starting a process.
+uptime_now() { read -r _upt _x < /proc/uptime; _now="${_upt%%.*}"; }
+
+# child_alive: our Unbound child exists and is not a zombie (builtins only).
+child_alive() {
+    [ -n "$_child" ] || return 1
+    _st=""
+    read -r _st < "/proc/$_child/stat" 2>/dev/null || return 1
+    case "$_st" in *") Z "*) return 1 ;; esac
+    return 0
+}
 
 daemon_main() {
     setup_data
@@ -201,52 +225,85 @@ daemon_main() {
     rm -f "$RUN/stop"
     _stop=0
     trap '_stop=1' TERM INT
-    trap ':' USR1                       # "something changed": wake up now
+    trap ':' USR1                       # "something changed": look now
+    trap ':' CHLD                       # Unbound or a list update exited: look now
     log "daemon: started ($(module_version), unbound $(unbound_version))"
 
-    _backoff=5; _next_try=0; _tick=0; _pd_done=0
+    # Start from a clean slate: Unbound must be our own child, and rules
+    # left behind by an earlier run must not point at nothing.
+    stop_unbound
+    redirect_remove
+
+    _poll="${UNBOUND_POLL:-30}"
+    _maint_every="${UNBOUND_MAINT:-300}"
+    _child=""; _applied=0; _pd_done=0; _backoff=5; _next_try=0
+    uptime_now; _next_maint="$_now"
     while [ "$_stop" = 0 ] && [ ! -f "$RUN/stop" ] && ! module_off; do
+        uptime_now
+        _maint=0
+        if [ "$_now" -ge "$_next_maint" ]; then
+            _maint=1; _next_maint=$((_now + _maint_every))
+        fi
         if [ -f "$RUN/restart" ]; then          # user asked: retry right away
             rm -f "$RUN/restart"
             _next_try=0; _backoff=5
         fi
-        if ! unbound_running; then
-            if redirect_active; then
-                redirect_remove
+
+        if ! child_alive; then
+            [ -n "$_child" ] && wait "$_child" 2>/dev/null
+            _child=""
+            if [ "$_applied" = 1 ]; then
+                redirect_remove; _applied=0
                 log "redirect: removed because Unbound is not running"
             fi
-            if [ "$(now)" -ge "$_next_try" ]; then
+            if [ "$_now" -ge "$_next_try" ]; then
                 if start_unbound; then
+                    read -r _child < "$RUN/unbound.pid"
                     _backoff=5
                 else
-                    _next_try=$(( $(now) + _backoff ))
+                    uptime_now
+                    _next_try=$((_now + _backoff))
                     _backoff=$(( _backoff * 2 > 300 ? 300 : _backoff * 2 ))
                 fi
             fi
         fi
 
-        if unbound_running; then
-            if [ "$(setting_get REDIRECT 1)" = 1 ]; then
-                redirect_active || redirect_apply
+        if child_alive; then
+            setting_var REDIRECT 1
+            if [ "$_sv" = 1 ]; then
+                # Re-apply if a network change flushed our rules (checked
+                # with iptables only every few minutes).
+                if [ "$_applied" = 0 ] || { [ "$_maint" = 1 ] && ! redirect_active; }; then
+                    redirect_apply && _applied=1
+                fi
                 if [ "$_pd_done" = 0 ] && [ "$(getprop sys.boot_completed 2>/dev/null)" = 1 ]; then
                     private_dns_disable && _pd_done=1
                 fi
-            elif redirect_active; then
-                redirect_remove
+            elif [ "$_applied" = 1 ]; then
+                redirect_remove; _applied=0
                 log "redirect: off (turned off by user)"
             fi
-            if refresh_due; then
+            if [ "$_maint" = 1 ] && refresh_due; then
                 log "lists: scheduled refresh"
                 sh "$MODDIR/ctl.sh" update-lists >/dev/null 2>&1 &
             fi
         fi
 
-        if [ $((_tick % 30)) = 0 ]; then
+        if [ "$_maint" = 1 ]; then
             rotate_logs
             stats_bank
         fi
-        _tick=$((_tick + 1))
-        sleep "${UNBOUND_POLL:-10}" &
+
+        # Sleep until the next poll, a retry is due, a signal arrives or a
+        # child exits, whichever comes first.
+        _wait="$_poll"
+        if ! child_alive; then
+            uptime_now
+            _wait=$((_next_try - _now))
+            [ "$_wait" -lt 1 ] && _wait=1
+            [ "$_wait" -gt "$_poll" ] && _wait="$_poll"
+        fi
+        sleep "$_wait" &
         _sl=$!
         wait "$_sl" 2>/dev/null
         kill "$_sl" 2>/dev/null

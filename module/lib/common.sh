@@ -44,6 +44,18 @@ setting_get() {
     [ -n "$_v" ] && printf '%s' "$_v" || printf '%s' "${2:-}"
 }
 
+# setting_var KEY [DEFAULT]: like setting_get, but leaves the value in $_sv
+# and starts no process (for the supervisor's quiet path).
+setting_var() {
+    _sv=""
+    if [ -f "$SETTINGS" ]; then
+        while IFS='=' read -r _sk _sval; do
+            [ "$_sk" = "$1" ] && _sv="$_sval"
+        done < "$SETTINGS"
+    fi
+    [ -n "$_sv" ] || _sv="${2:-}"
+}
+
 # setting_set KEY VALUE   (empty VALUE removes the key)
 setting_set() {
     case "$1" in *[!A-Z0-9_]*|'') die "bad setting key" ;; esac

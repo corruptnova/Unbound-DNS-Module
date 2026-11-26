@@ -213,7 +213,7 @@ sh_dev "ASH_STANDALONE=1 /data/adb/ksu/bin/busybox sh $MOD/action.sh" | grep -q 
 
 say "disable in manager"
 sh_dev "touch $MOD/disable"
-wait_until 30 "redirect removed when disabled" redirect_inactive
+wait_until 60 "redirect removed when disabled" redirect_inactive
 wait_until 10 "private dns restored" sh -c "[ \"\$(adb shell settings get global private_dns_mode | tr -d '\r')\" = opportunistic ]"
 resolves www.google.com && ok "DNS works after disable" || bad "DNS after disable"
 
