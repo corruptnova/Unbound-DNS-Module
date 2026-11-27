@@ -14,6 +14,10 @@ export UNBOUND_MODDIR="$MOD" UNBOUND_DATA="$TMP/data" UNBOUND_APPDATA="$TMP/appd
 export UNBOUND_NO_BUSYBOX_REEXEC=1 UNBOUND_POLL=1 UNBOUND_START_TIMEOUT=5 UNBOUND_APPLY_TIMEOUT=10
 export UNBOUND_IF_INET6="$TMP/if_inet6" UNBOUND_CA_BUNDLE="$TMP/ca.pem"
 export PATH="$TESTS_DIR/stubs:$PATH"
+# A stand-in for /sys/fs/selinux: "context" exists only while a test says
+# the module's policy is loaded.
+SEFS="$TMP/selinuxfs"
+export UNBOUND_SELINUXFS="$SEFS"
 mkdir -p "$STUB_STATE/www" "$STUB_STATE/settings" "$TMP/appdata/com.android.captiveportallogin"
 echo hostname > "$STUB_STATE/settings/private_dns_mode"
 echo dns.example.net > "$STUB_STATE/settings/private_dns_specifier"
@@ -439,13 +443,21 @@ wait_for 10 jump_present
 assert_eq "no policy: unconfined" "unconfined" "$(se_state)"
 grep -q '^runcon ' "$STUB_STATE/calls.log" && fail "runcon used without the policy" || pass
 ctl stop >/dev/null; wait_for 10 daemon_gone
+# Root can label files with types the policy lacks, so chcon working must
+# not count as the policy being loaded: only the kernel's context check does.
+touch "$STUB_STATE/selinux"
+UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
+wait_for 10 jump_present
+assert_eq "chcon alone is not the policy" "unconfined" "$(se_state)"
+ctl stop >/dev/null; wait_for 10 daemon_gone
 # Loaded: label the binary, then start it through runcon in unbound_dns.
-touch "$STUB_STATE/selinux"; : > "$STUB_STATE/calls.log"
+mkdir -p "$SEFS"; : > "$SEFS/context"; : > "$STUB_STATE/calls.log"
 UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
 wait_for 10 jump_present
 assert_eq "policy loaded: learning" "learning" "$(se_state)"
 assert_contains "binary labelled" "chcon u:object_r:unbound_dns_exec:s0 $MOD/bin/unbound" "$(cat "$STUB_STATE/calls.log")"
 assert_contains "started in its domain" "runcon u:r:unbound_dns:s0 $MOD/bin/unbound -d -c" "$(cat "$STUB_STATE/calls.log")"
+assert_eq "context checked with the kernel" "u:r:unbound_dns:s0" "$(cat "$SEFS/context")"
 ctl stop >/dev/null; wait_for 10 daemon_gone
 # The domain does not work: run Unbound the old way and say why.
 touch "$STUB_STATE/runcon.fail"
@@ -470,7 +482,7 @@ assert_contains "socket kind kept" "{ name_bind }" "$report"
 assert_not_contains "other domains ignored" "untrusted_app" "$report"
 assert_eq "kept across reports" "2" "$(rm -f "$STUB_STATE/dmesg.txt"; ctl selinux-report | grep -c 'avc: denied')"
 assert_contains "diagnostics include them" "== SELinux" "$(ctl diag)"
-rm -f "$STUB_STATE/selinux" "$STUB_STATE/logcat.txt"
+rm -f "$STUB_STATE/selinux" "$STUB_STATE/logcat.txt" "$SEFS/context"
 
 # --- rules removed by something else are put back ---------------------------------
 v6_jump_present() { grep -qx -- '-j UNBOUND_DNS' "$STUB_STATE/ip6tables/nat/OUTPUT" 2>/dev/null; }

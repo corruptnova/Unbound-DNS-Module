@@ -126,12 +126,21 @@ private_dns_restore() {
 SE_DOMAIN=unbound_dns
 SE_MODE=learning
 SE_DENIALS="$LOGDIR/selinux-denials.txt"
+SE_FS="${UNBOUND_SELINUXFS:-/sys/fs/selinux}"
+
+# se_known: the loaded policy knows the domain. The kernel checks a context
+# written to selinuxfs; chcon is no test, as root may set unknown labels.
+se_known() {
+    [ -e "$SE_FS/context" ] || return 1
+    printf 'u:r:%s:s0' "$SE_DOMAIN" | cat 1<> "$SE_FS/context" 2>/dev/null
+}
 
 # se_prepare: label the Unbound binary so it can enter its domain. Fails when
-# the policy has no such type (not loaded) or there is no runcon.
+# the policy does not have the domain (not loaded) or there is no runcon.
 se_prepare() {
     [ -z "${UNBOUND_NO_SELINUX:-}" ] || return 1
     command -v runcon >/dev/null 2>&1 || return 1
+    se_known || return 1
     chcon "u:object_r:${SE_DOMAIN}_exec:s0" "$BIN/unbound" 2>/dev/null
 }
 
