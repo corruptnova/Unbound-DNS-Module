@@ -17,7 +17,9 @@ FAILS=0
 
 say() { printf '\n== %s\n' "$*"; }
 ok() { echo "ok   $*"; }
-bad() { echo "FAIL $*"; FAILS=$((FAILS + 1)); }
+FAILED=""
+bad() { echo "FAIL $*"; FAILS=$((FAILS + 1)); FAILED="$FAILED
+  - $*"; }
 sh_dev() { adb shell "$@" | tr -d '\r'; }
 ctl() { sh_dev "/data/adb/ksu/bin/busybox sh $MOD/ctl.sh $*"; }
 
@@ -113,7 +115,11 @@ sh_dev "grep -q 'start of service' /data/adb/unbound/log/unbound.log && echo yes
 # exactly as before, and say so.
 ctl status | grep -q '"selinux":"unconfined"' && ok "without the module policy Unbound runs as before" \
     || bad "selinux state: $(ctl status | grep -o '"selinux":"[a-z]*"')"
-ctl selinux-report | grep -q '^state: unconfined' && ok "selinux-report works" || bad "selinux-report"
+# Read the whole report: with pipefail, grep -q stopping early fails the pipe.
+case "$(ctl selinux-report)" in
+    "state: unconfined"*) ok "selinux-report works" ;;
+    *) bad "selinux-report: $(ctl selinux-report | head -n 1)" ;;
+esac
 
 say "resolution goes through Unbound"
 q0="$(ctl status | sed -n 's/.*"queries":\([0-9]*\).*/\1/p')"
@@ -255,7 +261,7 @@ resolves www.google.com && ok "DNS works after disable" || bad "DNS after disabl
 if [ "$FAILS" -gt 0 ]; then
     net_diag
     dump_logs
-    echo "emulator smoke test: $FAILS failed"
+    echo "emulator smoke test: $FAILS failed:$FAILED"
     exit 1
 fi
 echo "emulator smoke test: all passed"
