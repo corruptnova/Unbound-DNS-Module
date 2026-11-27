@@ -453,7 +453,9 @@ calls_since "$_m" | grep -Eq '^ip6?tables ' && fail "polls ran iptables (takes t
 _m=$(ncalls)
 iptables -w -t nat -D OUTPUT -j UNBOUND_DNS
 wait_for 4 jump_present && pass || fail "nat jump restored at the next poll"
-assert_contains "restore logged" "redirect: put back our rules that were removed: iptables/UNBOUND_DNS" "$(cat "$D/log/module.log")"
+# The jump comes back first; the log line follows once IPv6 is checked too.
+wait_for 4 grep -q "redirect: put back our rules that were removed: iptables/UNBOUND_DNS" "$D/log/module.log" \
+    && pass || fail "restore logged: $(tail -n 3 "$D/log/module.log")"
 calls_since "$_m" | grep -Eq -- '-F UNBOUND_DOT|^ip6tables .*-F ' && fail "restore rebuilt rules that were still there" || pass
 assert_eq "other app's nat chain untouched" "-p udp --dport 53 -j RETURN" "$(cat "$STUB_STATE/iptables/nat/FW_APP")"
 assert_eq "other app's filter chain untouched" "-m owner --uid-owner 10099 -j DROP" "$(cat "$STUB_STATE/iptables/filter/fw_app")"

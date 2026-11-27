@@ -234,10 +234,8 @@ sh_dev "iptables-save -t nat" | grep -qx -- "-A OUTPUT -j UNBOUND_DNS" \
 sh_dev "iptables -w -t nat -D OUTPUT -j UNBOUND_DNS"
 redirect_inactive && ok "redirect jump deleted" || bad "could not delete the jump"
 wait_until 40 "redirect put back within a poll" redirect_active
-case "$(sh_dev "cat /data/adb/unbound/log/module.log")" in
-    *"put back our rules that were removed: iptables/UNBOUND_DNS"*) ok "restore logged" ;;
-    *) bad "restore not logged" ;;
-esac
+restore_logged() { sh_dev "grep -c 'put back our rules that were removed: iptables/UNBOUND_DNS' /data/adb/unbound/log/module.log" | grep -qv '^0'; }
+wait_until 10 "restore logged" restore_logged
 
 say "disable in manager"
 case "$(sh_dev "cat /data/adb/unbound/log/module.log")" in
