@@ -23,15 +23,16 @@ allow unbound_dns_data_file labeledfs filesystem associate
 
 # --- Unbound ------------------------------------------------------------------
 # Android's rules for all domains reach a new domain only where they name other
-# types; the ones about a process's own resources must be given here.
-allow unbound_dns self process { fork sigchld signal signull sigkill getsched setsched getattr getpgid setpgid getsession getcap setcap setrlimit }
-allow unbound_dns self fd use
-allow unbound_dns self dir { getattr open read search }
-allow unbound_dns self file { getattr open read }
-allow unbound_dns self lnk_file { getattr read }
-allow unbound_dns self fifo_file { getattr read write }
+# types; the ones about a process's own resources must be given here. ("self"
+# is a policy compiler's shorthand; the root managers want the type's name.)
+allow unbound_dns unbound_dns process { fork sigchld signal signull sigkill getsched setsched getattr getpgid setpgid getsession getcap setcap setrlimit }
+allow unbound_dns unbound_dns fd use
+allow unbound_dns unbound_dns dir { getattr open read search }
+allow unbound_dns unbound_dns file { getattr open read }
+allow unbound_dns unbound_dns lnk_file { getattr read }
+allow unbound_dns unbound_dns fifo_file { getattr read write }
 # Root until it has bound its ports and chrooted, then the inet user.
-allow unbound_dns self capability { chown setuid setgid sys_chroot net_admin dac_read_search }
+allow unbound_dns unbound_dns capability { chown setuid setgid sys_chroot net_admin dac_read_search }
 
 # Its binary.
 allow unbound_dns unbound_dns_exec file { entrypoint execute read open getattr }
@@ -48,11 +49,11 @@ allow unbound_dns unbound_dns_data_file lnk_file { getattr read }
 
 # Sockets: DNS on 5335, queries out (UDP, TCP, TLS on 853), the control
 # socket, network interfaces (netlink), and Android's socket marking (netd).
-allow unbound_dns self { udp_socket tcp_socket } { create bind connect listen accept read write getattr setattr getopt setopt shutdown ioctl }
-allow unbound_dns self unix_stream_socket { create bind connect listen accept read write getattr setattr getopt setopt shutdown }
-allow unbound_dns self unix_dgram_socket { create bind connect read write getattr setattr getopt setopt shutdown }
-allow unbound_dns self netlink_route_socket { create bind connect read write getattr setattr getopt setopt shutdown nlmsg_read }
-allow unbound_dns self netlink_route_socket nlmsg_readpriv
+allow unbound_dns unbound_dns { udp_socket tcp_socket } { create bind connect listen accept read write getattr setattr getopt setopt shutdown ioctl }
+allow unbound_dns unbound_dns unix_stream_socket { create bind connect listen accept read write getattr setattr getopt setopt shutdown }
+allow unbound_dns unbound_dns unix_dgram_socket { create bind connect read write getattr setattr getopt setopt shutdown }
+allow unbound_dns unbound_dns netlink_route_socket { create bind connect read write getattr setattr getopt setopt shutdown nlmsg_read }
+allow unbound_dns unbound_dns netlink_route_socket nlmsg_readpriv
 allow unbound_dns port { udp_socket tcp_socket } name_bind
 allow unbound_dns port tcp_socket name_connect
 allow unbound_dns node { udp_socket tcp_socket } node_bind

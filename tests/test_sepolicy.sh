@@ -2,8 +2,9 @@
 # module/sepolicy.rule: the root manager skips a statement it cannot apply,
 # without saying so, so check here what can be checked without a device:
 # every class exists, every permission exists in each class of its statement,
-# and sources and targets are single types, so one type a device lacks (magisk
-# on KernelSU, su on user builds) only costs that one statement.
+# and sources and targets are single, named types: one type a device lacks
+# (magisk on KernelSU, su on user builds) then only costs that one statement,
+# and "self", which only the policy compiler knows, is not used.
 . "${TESTS_DIR:-$(dirname "$0")}/lib.sh"
 
 RULES="$REPO_DIR/module/sepolicy.rule"
@@ -31,6 +32,7 @@ check_rules() {
             }
             if (f != 5) { print NR ": needs 5 fields: " $0; bad++; next }
             if (fld[2] ~ /[{*]/ || fld[3] ~ /[{*]/) { print NR ": one source and one target per statement: " $0; bad++ }
+            if (fld[2] == "self" || fld[3] == "self") { print NR ": self is not a type the root managers know: " $0; bad++ }
             nc = split(items(fld[4]), cls, " "); np = split(items(fld[5]), pm, " ")
             for (i = 1; i <= nc; i++) {
                 if (!(cls[i] in known)) { print NR ": no class " cls[i]; bad++; continue }
@@ -49,6 +51,8 @@ printf 'allow ksu unbound_dns { dir file } { getattr search }\n' > "$TMP/bad.rul
 assert_contains "permission missing from a class" "file has no search" "$(check_rules "$TMP/bad.rule")"
 printf 'allow { ksu magisk } unbound_dns fd use\n' > "$TMP/bad.rule"
 assert_contains "two sources in one statement" "one source and one target" "$(check_rules "$TMP/bad.rule")"
+printf 'allow unbound_dns self fd use\n' > "$TMP/bad.rule"
+assert_contains "self" "self is not a type" "$(check_rules "$TMP/bad.rule")"
 printf 'allow ksu unbound_dns nosuchclass read\n' > "$TMP/bad.rule"
 assert_contains "unknown class" "no class nosuchclass" "$(check_rules "$TMP/bad.rule")"
 
