@@ -147,12 +147,20 @@ se_known() {
 # folder so the domain can be kept to it. Fails when the policy does not have
 # them (not loaded) or there is no runcon. New files in the folder take its
 # label. -h: never follow a symbolic link (Unbound's user can write var/).
+#
+# Each label is written twice, through another one. A file the kernel looked
+# at before the root manager added the module's types at boot (the label is
+# still there from the boot before) stays "unlabeled" to the kernel until its
+# label is written again, and BusyBox's chcon skips a file whose label already
+# reads the same.
 se_prepare() {
     [ -z "${UNBOUND_NO_SELINUX:-}" ] || return 1
     command -v runcon >/dev/null 2>&1 || return 1
     se_known "$SE_DATA" "u:r:$SE_DOMAIN:s0" || return 1
+    chcon u:object_r:system_file:s0 "$BIN/unbound" 2>/dev/null
     chcon "u:object_r:${SE_DOMAIN}_exec:s0" "$BIN/unbound" 2>/dev/null || return 1
     : > "$SE_LABELLED"
+    chcon -hR "$SE_DATA_PLAIN" "$DATA" 2>/dev/null
     chcon -hR "$SE_DATA" "$DATA" 2>/dev/null
 }
 

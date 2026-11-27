@@ -475,6 +475,16 @@ UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
 wait_for 10 jump_present
 assert_eq "policy loaded: learning" "learning" "$(se_state)"
 assert_contains "binary labelled" "chcon u:object_r:unbound_dns_exec:s0 $MOD/bin/unbound" "$(cat "$STUB_STATE/calls.log")"
+# Written through another label first, so the kernel takes it afresh even
+# when the file already reads the same (BusyBox's chcon would skip it).
+assert_eq "binary relabelled, not skipped" \
+    "chcon u:object_r:system_file:s0 $MOD/bin/unbound
+chcon u:object_r:unbound_dns_exec:s0 $MOD/bin/unbound" \
+    "$(grep "^chcon .* $MOD/bin/unbound\$" "$STUB_STATE/calls.log")"
+assert_eq "folder relabelled, not skipped" \
+    "chcon -hR u:object_r:adb_data_file:s0 $D
+chcon -hR u:object_r:unbound_dns_data_file:s0 $D" \
+    "$(grep "^chcon -hR .* $D\$" "$STUB_STATE/calls.log")"
 assert_contains "started in its domain" "runcon -- u:r:unbound_dns:s0 $MOD/bin/unbound -d -c" "$(cat "$STUB_STATE/calls.log")"
 # The stub parses like BusyBox's runcon, which took Unbound's -d for its own
 # option when no "--" came first.
