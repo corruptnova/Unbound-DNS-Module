@@ -159,14 +159,14 @@ function renderLists(l) {
     el('button', {
       type: 'button', class: 'icon-btn', 'aria-label': `Remove ${d} from allowlist`, title: 'Remove',
       onclick: () => act(() => ctl('allow-remove', d), `${d} removed from allowlist`),
-    }, '✕'))));
+    }, icon('close')))));
 
   $('own').replaceChildren(...(l.block || []).map((d) => el('li', {},
     el('div', { class: 'item-main' }, el('div', { class: 'item-title' }, d)),
     el('button', {
       type: 'button', class: 'icon-btn', 'aria-label': `Remove ${d} from my blocklist`, title: 'Remove',
       onclick: () => act(() => ctl('block-remove', d), `${d} is no longer blocked by you`),
-    }, '✕'))));
+    }, icon('close')))));
 
   const have = new Set(l.sources.map((s) => s.url));
   const sel = $('preset');

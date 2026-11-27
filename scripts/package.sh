@@ -65,9 +65,12 @@ cat > "$DIST/changelog.md" <<EOF
 - Built with Android NDK $NDK_VERSION for API $ANDROID_API+ ($(echo "$ABIS" | tr ' ' ','))
 EOF
 if [ -f "$ROOT_DIR/CHANGELOG.md" ]; then
-    # Notes for this revision, if the maintainer wrote any.
-    awk -v v="## $VERSION" '$0 == v { on = 1; next } /^## / { on = 0 } on' \
-        "$ROOT_DIR/CHANGELOG.md" >> "$DIST/changelog.md"
+    # Notes for this revision, if the maintainer wrote any; otherwise the
+    # "Unreleased" notes (an automatic release after an upstream update).
+    notes() { awk -v v="## $1" '$0 == v { on = 1; next } /^## / { on = 0 } on' "$ROOT_DIR/CHANGELOG.md"; }
+    section="$(notes "$VERSION")"
+    [ -n "$(printf '%s' "$section" | tr -d '[:space:]')" ] || section="$(notes Unreleased)"
+    printf '%s\n' "$section" >> "$DIST/changelog.md"
 fi
 
 log "packaged dist/$ZIP ($(du -h "$DIST/$ZIP" | cut -f1)), versionCode $CODE"

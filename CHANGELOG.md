@@ -3,6 +3,16 @@
 Notes for module revisions. Releases list the bundled versions on top of
 these notes.
 
+## Unreleased
+
+- New look: the WebUI follows Material Design 3 (Material You), in light
+  and dark: top app bar with icon buttons, a status card coloured by state,
+  M3 switches, radio rows, outlined fields, segmented log tabs, snackbars
+  and a bottom bar for unsaved settings. Everything is still local; nothing
+  is loaded from the internet.
+- Fix: the Action button could report "redirect: on" right after turning
+  it off, while the rules were already being removed.
+
 ## v1.26.2-r8
 
 Security hardening (nothing here was known to be exploited; each closes a

@@ -57,6 +57,28 @@ async function ctlResult(...args) {
   }
 }
 
+// Icons from Material Icons (Apache License 2.0,
+// https://github.com/google/material-design-icons), drawn inline.
+const ICONS = {
+  close: 'M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z',
+};
+function icon(name) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('class', 'icon');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const p = document.createElementNS(ns, 'path');
+  p.setAttribute('d', ICONS[name]);
+  svg.append(p);
+  return svg;
+}
+
+// The top app bar takes a container colour once the page scrolls under it.
+addEventListener('scroll', () => {
+  document.body.classList.toggle('scrolled', scrollY > 0);
+}, { passive: true });
+
 let toastTimer = null;
 function toast(msg, bad = false) {
   const t = $('toast');
@@ -90,26 +112,22 @@ function ago(ts) {
 // WebView may not show confirm() dialogs, so ask in place: first tap arms
 // the button, a second tap within 4 s does it.
 function confirmButton(label, onConfirm, opts = {}) {
-  const idle = opts.text || '✕';
+  const idle = () => opts.text || icon('close');
   const armed = opts.armedText || 'Remove?';
-  const b = el('button', { type: 'button', class: opts.class || 'icon-btn', 'aria-label': label, title: label }, idle);
+  const b = el('button', { type: 'button', class: opts.class || 'icon-btn', 'aria-label': label, title: label }, idle());
   let timer = null;
+  const reset = () => { b.replaceChildren(idle()); b.classList.remove('armed'); };
   b.addEventListener('click', () => {
     if (timer) {
       clearTimeout(timer);
       timer = null;
-      b.textContent = idle;
-      b.classList.remove('armed');
+      reset();
       onConfirm();
       return;
     }
     b.textContent = armed;
     b.classList.add('armed');
-    timer = setTimeout(() => {
-      timer = null;
-      b.textContent = idle;
-      b.classList.remove('armed');
-    }, 4000);
+    timer = setTimeout(() => { timer = null; reset(); }, 4000);
   });
   return b;
 }

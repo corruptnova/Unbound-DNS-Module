@@ -15,6 +15,15 @@ const REPO = path.resolve(__dirname, '../..');
 const SHOTS = process.argv.includes('--screenshots')
   ? path.resolve(process.argv[process.argv.indexOf('--screenshots') + 1]) : null;
 
+// Viewport screenshot of a state worth seeing (only with --screenshots),
+// scrolled so TARGET is in view.
+async function shot(page, name, target) {
+  if (!SHOTS) return;
+  if (target) await target.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(400); // let transitions settle
+  await page.screenshot({ path: path.join(SHOTS, `${name}.png`) });
+}
+
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'unbound-webui-'));
 const MOD = path.join(tmp, 'module');
 const STATE = path.join(tmp, 'state');
@@ -148,6 +157,7 @@ function check(name, ok, detail = '') {
         const btn = page.locator('button[aria-label^="Remove <img"]');
         await btn.click();
         check('remove asks first', (await btn.textContent()) === 'Remove?');
+        await shot(page, `webui-remove-${scheme}`, btn);
         await btn.click();
         await page.waitForFunction(() => !document.getElementById('sources').textContent.includes('<img'), null, { timeout: 10000 });
         check('list removed after confirm', true);
@@ -158,6 +168,7 @@ function check(name, ok, detail = '') {
         await page.click('[data-log="diag"]');
         await page.waitForFunction(() => document.getElementById('log').textContent.includes('Unbound DNS module diagnostics'), null, { timeout: 15000 });
         check('diagnostics shown', (await page.textContent('#log')).includes('== redirect rules'));
+        await shot(page, `webui-log-${scheme}`, page.locator('#log-details'));
         await page.click('#log-details summary');
 
         // My blocklist.
@@ -178,6 +189,8 @@ function check(name, ok, detail = '') {
       check(`no horizontal scroll (${scheme})`, !overflow);
       if (SHOTS) {
         fs.mkdirSync(SHOTS, { recursive: true });
+        await page.evaluate(() => scrollTo(0, 0));
+        await page.waitForTimeout(400); // let transitions settle
         await page.screenshot({ path: path.join(SHOTS, `webui-${scheme}.png`), fullPage: true });
       }
 
@@ -192,6 +205,7 @@ function check(name, ok, detail = '') {
         check('apply bar hidden without changes', await page.isHidden('#apply-bar'));
         await page.check('input[name=RESOLVER][value=quad9]');
         check('apply bar appears on change', await page.isVisible('#apply-bar'));
+        await shot(page, `settings-apply-${scheme}`);
         await clearToast();
         await page.click('#apply-btn');
         await page.waitForFunction(() => document.getElementById('toast').textContent === 'Applied', null, { timeout: 30000 });
@@ -204,6 +218,7 @@ function check(name, ok, detail = '') {
         await page.click('#apply-btn');
         await page.waitForSelector('#apply-error:not([hidden])', { timeout: 15000 });
         check('server without TLS name rejected', (await page.textContent('#apply-error')).includes('invalid server'));
+        await shot(page, `settings-error-${scheme}`, page.locator('#apply-error'));
         check('rejected change not saved', settingsFile().includes('RESOLVER=quad9'));
         await page.check('input[name=RESOLVER][value=custom]');
         await page.fill('#forwarders', '9.9.9.9 dns.quad9.net\n2620:fe::fe dns.quad9.net');
@@ -244,6 +259,8 @@ function check(name, ok, detail = '') {
       const overflowS = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
       check(`settings: no horizontal scroll (${scheme})`, !overflowS);
       if (SHOTS) {
+        await page.evaluate(() => scrollTo(0, 0));
+        await page.waitForTimeout(400); // let transitions settle
         await page.screenshot({ path: path.join(SHOTS, `settings-${scheme}.png`), fullPage: true });
       }
       await page.click('#back-link');
