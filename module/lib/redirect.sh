@@ -31,8 +31,13 @@ exempt_uids() {
 
 _ipt() { "$@" 2>/dev/null; }
 
-# _chains_add IPT: build both chains for one family. Fails if NAT is missing.
-_chains_add() {
+# Only our own chains (UNBOUND_DNS, UNBOUND_DOT) and the two jumps into them
+# are ever created, changed or removed. They never ACCEPT anything: a packet
+# is redirected (port 53), rejected (port 853) or handed on to the next rule,
+# so another firewall's rules keep working as before.
+
+# _nat_chain IPT: (re)build our nat chain. Fails if the kernel has no NAT.
+_nat_chain() {
     _i="$1"
     _ipt "$_i" -w -t nat -N "$NAT_CHAIN" || _ipt "$_i" -w -t nat -F "$NAT_CHAIN" || return 1
     for _u in $(exempt_uids | awk '!seen[$0]++'); do
@@ -48,8 +53,18 @@ _chains_add() {
     fi
     _ipt "$_i" -w -t nat -A "$NAT_CHAIN" -p udp --dport 53 -j REDIRECT --to-ports "$UB_PORT" || return 1
     _ipt "$_i" -w -t nat -A "$NAT_CHAIN" -p tcp --dport 53 -j REDIRECT --to-ports "$UB_PORT" || return 1
+}
 
-    # Blocking 853 is a hardening extra: never fail the redirect over it.
+# _nat_jump IPT: the jump from nat OUTPUT into our chain.
+_nat_jump() {
+    _ipt "$1" -w -t nat -C OUTPUT -j "$NAT_CHAIN" || _ipt "$1" -w -t nat -I OUTPUT -j "$NAT_CHAIN"
+}
+
+# _dot_add IPT: (re)build the DoT block and its jump; records dot.IPT when
+# it is in place. Blocking 853 is a hardening extra: it never fails the
+# redirect.
+_dot_add() {
+    _i="$1"
     rm -f "$RUN/dot.$_i"
     if _ipt "$_i" -w -N "$DOT_CHAIN" || _ipt "$_i" -w -F "$DOT_CHAIN"; then
         for _u in $(exempt_uids | awk '!seen[$0]++'); do
@@ -61,10 +76,16 @@ _chains_add() {
             echo ok > "$RUN/dot.$_i"
         fi
     fi
-    # The jump into the redirect goes in last: once it exists (what
-    # redirect_active checks), every other rule is already in place.
-    _ipt "$_i" -w -t nat -C OUTPUT -j "$NAT_CHAIN" || _ipt "$_i" -w -t nat -I OUTPUT -j "$NAT_CHAIN" || return 1
     return 0
+}
+
+# _chains_add IPT: everything for one family. The jump into the redirect
+# goes in last: once it exists (what redirect_active checks), every other
+# rule is already in place.
+_chains_add() {
+    _nat_chain "$1" || return 1
+    _dot_add "$1"
+    _nat_jump "$1"
 }
 
 _chains_del() {
@@ -108,20 +129,78 @@ redirect_remove() {
         "$RUN/dot.iptables" "$RUN/dot.ip6tables"
 }
 
-# redirect_active: the IPv4 jump into the redirect is there. Reads only the
-# small nat table.
-redirect_active() { _ipt iptables -w -t nat -C OUTPUT -j "$NAT_CHAIN"; }
+# _has_jump IPT TABLE CHAIN: OUTPUT in TABLE still jumps to CHAIN. Reads
+# the rules with IPT-save, which (unlike "iptables -C") does not take the
+# xtables lock, so looking never makes another app's iptables command wait
+# or fail. Returns 0 yes, 1 no, 2 could not tell.
+_has_jump() {
+    _hj="$("$1-save" -t "$2" 2>/dev/null)"
+    _hs=$?
+    if [ "$_hs" = 127 ]; then                 # no IPT-save on this system
+        _ipt "$1" -w -t "$2" -C OUTPUT -j "$3"
+        return
+    fi
+    { [ "$_hs" = 0 ] && [ -n "$_hj" ]; } || return 2
+    case "$NL$_hj$NL" in *"$NL-A OUTPUT -j $3$NL"*) return 0 ;; esac
+    return 1
+}
 
-# redirect_intact: every jump we installed is still there, including the
-# DoT block in the large filter table.
-redirect_intact() {
-    redirect_active || return 1
-    _ri=""; read -r _ri < "$RUN/dot.iptables" 2>/dev/null
-    if [ "$_ri" = ok ]; then _ipt iptables -w -C OUTPUT -j "$DOT_CHAIN" || return 1; fi
-    _ri=""; read -r _ri < "$RUN/redirect.v6" 2>/dev/null
-    [ "$_ri" = ok ] || return 0
-    _ipt ip6tables -w -t nat -C OUTPUT -j "$NAT_CHAIN" || return 1
-    _ri=""; read -r _ri < "$RUN/dot.ip6tables" 2>/dev/null
-    if [ "$_ri" = ok ]; then _ipt ip6tables -w -C OUTPUT -j "$DOT_CHAIN" || return 1; fi
+# _installed IPT PART: we put PART (v6, dot) in place for IPT.
+_installed() {
+    _inst=""
+    case "$2" in
+        v6) read -r _inst < "$RUN/redirect.v6" 2>/dev/null ;;
+        dot) read -r _inst < "$RUN/dot.$1" 2>/dev/null ;;
+    esac
+    [ "$_inst" = ok ]
+}
+
+# redirect_active: the IPv4 jump into the redirect is there.
+redirect_active() {
+    _has_jump iptables nat "$NAT_CHAIN"
+    case $? in 0) return 0 ;; 1) return 1 ;; esac
+    _ipt iptables -w -t nat -C OUTPUT -j "$NAT_CHAIN"
+}
+
+# redirect_missing [all]: one of our jumps is certainly gone. Plain: only
+# the IPv4 DNS jump (small nat table). "all": also IPv6 and the DoT blocks
+# (the filter table is large). A read that fails counts as "not gone".
+redirect_missing() {
+    _has_jump iptables nat "$NAT_CHAIN"; [ $? = 1 ] && return 0
+    [ "${1:-}" = all ] || return 1
+    if _installed iptables dot; then
+        _has_jump iptables filter "$DOT_CHAIN"; [ $? = 1 ] && return 0
+    fi
+    _installed ip6tables v6 || return 1
+    _has_jump ip6tables nat "$NAT_CHAIN"; [ $? = 1 ] && return 0
+    if _installed ip6tables dot; then
+        _has_jump ip6tables filter "$DOT_CHAIN"; [ $? = 1 ] && return 0
+    fi
+    return 1
+}
+
+# redirect_repair: put back whichever of our jumps are gone, rebuilding only
+# our own chain behind each; the parts still in place are left alone.
+redirect_repair() {
+    _fixed=""
+    for _i in iptables ip6tables; do
+        [ "$_i" = iptables ] || _installed ip6tables v6 || continue
+        if _installed "$_i" dot && ! _ipt "$_i" -w -C OUTPUT -j "$DOT_CHAIN"; then
+            _dot_add "$_i"
+            _fixed="$_fixed $_i/$DOT_CHAIN"
+        fi
+        _ipt "$_i" -w -t nat -C OUTPUT -j "$NAT_CHAIN" && continue
+        if _nat_chain "$_i" && _nat_jump "$_i"; then
+            _fixed="$_fixed $_i/$NAT_CHAIN"
+        elif [ "$_i" = iptables ]; then
+            log "redirect: could not put the IPv4 rules back"
+            return 1
+        else
+            _chains_del ip6tables
+            echo unsupported > "$RUN/redirect.v6"
+            log "redirect: could not put the IPv6 rules back; IPv6 DNS is not redirected"
+        fi
+    done
+    [ -z "$_fixed" ] || log "redirect: put back our rules that were removed:$_fixed"
     return 0
 }

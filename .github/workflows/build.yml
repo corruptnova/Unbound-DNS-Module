@@ -48,7 +48,7 @@ jobs:
           shellcheck -S warning -x -P scripts scripts/*.sh tests/emulator/smoke.sh
           shellcheck -S warning -s dash -x module/ctl.sh module/lib/*.sh module/service.sh \
             module/action.sh module/uninstall.sh module/customize.sh \
-            tests/*.sh tests/stubs/getprop tests/stubs/getevent tests/stubs/inotifyd tests/stubs/iptables tests/stubs/settings tests/stubs/bin/*
+            tests/*.sh tests/stubs/getprop tests/stubs/getevent tests/stubs/inotifyd tests/stubs/iptables tests/stubs/iptables-save tests/stubs/settings tests/stubs/bin/*
       - name: Shell tests (busybox ash)
         run: sudo sh tests/run.sh
       - uses: actions/setup-node@v4

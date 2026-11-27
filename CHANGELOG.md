@@ -14,9 +14,13 @@ these notes.
   folder is watched with inotifyd, which costs nothing while idle. Where
   inotifyd is missing, the module checks every 10 seconds.
 - If another app or service removes the redirect's firewall rule, it is put
-  back within 30 seconds instead of 5 minutes (one quick check of the small
-  NAT table). The IPv6 and DoT-blocking rules are now checked too, every
-  5 minutes.
+  back within 30 seconds instead of 5 minutes. The IPv6 and DoT-blocking
+  rules are now checked too, every 5 minutes.
+- Plays well with firewall apps: the checks read the rules with
+  iptables-save, which takes no lock, so another app's iptables commands
+  are never made to wait or fail. Only the module's own rules that are
+  actually gone are put back; other apps' chains and rules, and their order,
+  are never touched.
 - Fix: restarting Unbound could leave the status showing it as stopped.
 
 ## v1.26.2-r7

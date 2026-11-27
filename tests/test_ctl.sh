@@ -376,29 +376,66 @@ rm -f "$MOD/disable"
 # --- rules removed by something else are put back ---------------------------------
 v6_jump_present() { grep -qx -- '-j UNBOUND_DNS' "$STUB_STATE/ip6tables/nat/OUTPUT" 2>/dev/null; }
 dot_jump_present() { grep -qx -- '-j UNBOUND_DOT' "$STUB_STATE/iptables/filter/OUTPUT" 2>/dev/null; }
-# The IPv4 jump is checked at every poll (1 s here; maintenance far away).
+calls_since() { tail -n "+$(( $1 + 1 ))" "$STUB_STATE/calls.log"; }
+ncalls() { wc -l < "$STUB_STATE/calls.log"; }
+# Another firewall app's own chains and rules, one of them above ours.
+iptables -w -t nat -N FW_APP; iptables -w -t nat -A FW_APP -p udp --dport 53 -j RETURN
+iptables -w -N fw_app; iptables -w -A fw_app -m owner --uid-owner 10099 -j DROP
+iptables -w -A OUTPUT -j fw_app
+
 UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
 wait_for 10 jump_present
+iptables -w -t nat -I OUTPUT -j FW_APP
 sleep 1
+# Looking every poll uses iptables-save only: never the xtables lock.
+_m=$(ncalls); sleep 3
+assert_contains "polls read the nat table" "iptables-save -t nat" "$(calls_since "$_m")"
+calls_since "$_m" | grep -Eq '^ip6?tables ' && fail "polls ran iptables (takes the lock)" || pass
+
+# The IPv4 jump is checked at every poll (1 s here; maintenance far away).
+_m=$(ncalls)
 iptables -w -t nat -D OUTPUT -j UNBOUND_DNS
 wait_for 4 jump_present && pass || fail "nat jump restored at the next poll"
-assert_contains "restore logged" "redirect: rules were missing" "$(cat "$D/var/module.log")"
-# The rest (IPv6, DoT block) at maintenance.
+assert_contains "restore logged" "redirect: put back our rules that were removed: iptables/UNBOUND_DNS" "$(cat "$D/var/module.log")"
+calls_since "$_m" | grep -Eq -- '-F UNBOUND_DOT|^ip6tables .*-F ' && fail "restore rebuilt rules that were still there" || pass
+assert_eq "other app's nat chain untouched" "-p udp --dport 53 -j RETURN" "$(cat "$STUB_STATE/iptables/nat/FW_APP")"
+assert_eq "other app's filter chain untouched" "-m owner --uid-owner 10099 -j DROP" "$(cat "$STUB_STATE/iptables/filter/fw_app")"
+grep -qx -- '-j fw_app' "$STUB_STATE/iptables/filter/OUTPUT" && pass || fail "other app's jump kept"
+grep -qx -- '-j FW_APP' "$STUB_STATE/iptables/nat/OUTPUT" && pass || fail "other app's nat jump kept"
+
+# The rest (IPv6, DoT block) only at maintenance.
 ip6tables -w -t nat -D OUTPUT -j UNBOUND_DNS
 iptables -w -D OUTPUT -j UNBOUND_DOT
 sleep 3
 v6_jump_present && fail "ipv6 jump restored before maintenance" || pass
 ctl stop >/dev/null
 wait_for 10 daemon_gone
+iptables -w -t nat -D OUTPUT -j FW_APP; iptables -w -t nat -F FW_APP; iptables -w -t nat -X FW_APP
+iptables -w -D OUTPUT -j fw_app; iptables -w -F fw_app; iptables -w -X fw_app
+
 UNBOUND_MAINT=2 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
 wait_for 10 jump_present
 sleep 1
+_m=$(ncalls)
 ip6tables -w -t nat -D OUTPUT -j UNBOUND_DNS
 iptables -w -D OUTPUT -j UNBOUND_DOT
 wait_for 6 v6_jump_present && pass || fail "ipv6 jump restored at maintenance"
 wait_for 6 dot_jump_present && pass || fail "dot jump restored at maintenance"
+calls_since "$_m" | grep -q -- '^iptables .*-t nat -F UNBOUND_DNS' && fail "ipv4 nat rebuilt although intact" || pass
 ctl stop >/dev/null
 wait_for 10 daemon_gone
+
+# Without iptables-save the check falls back to iptables -C.
+touch "$STUB_STATE/nosave"
+UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
+wait_for 10 jump_present
+sleep 1
+iptables -w -t nat -D OUTPUT -j UNBOUND_DNS
+wait_for 4 jump_present && pass || fail "nat jump restored without iptables-save"
+assert_contains "status without iptables-save" '"redirect_active":true' "$(ctl status)"
+ctl stop >/dev/null
+wait_for 10 daemon_gone
+rm -f "$STUB_STATE/nosave"
 
 # --- disabling in the manager is noticed at once (inotifyd watches the folder) ---
 if command -v toybox >/dev/null 2>&1; then

@@ -215,11 +215,15 @@ redirect_inactive && ok "rules removed" || bad "rules still there"
 sh_dev "ASH_STANDALONE=1 /data/adb/ksu/bin/busybox sh $MOD/action.sh" | grep -q "redirect: on" && ok "action turns redirect on" || bad "action on"
 
 say "rules removed by something else"
+# The supervisor looks with iptables-save (no xtables lock); make sure that
+# sees the jump on Android.
+sh_dev "iptables-save -t nat" | grep -qx -- "-A OUTPUT -j UNBOUND_DNS" \
+    && ok "iptables-save shows the redirect jump" || bad "iptables-save does not show the jump"
 sh_dev "iptables -w -t nat -D OUTPUT -j UNBOUND_DNS"
 redirect_inactive && ok "redirect jump deleted" || bad "could not delete the jump"
 wait_until 40 "redirect put back within a poll" redirect_active
 case "$(sh_dev "cat /data/adb/unbound/var/module.log")" in
-    *"rules were missing"*) ok "restore logged" ;;
+    *"put back our rules that were removed: iptables/UNBOUND_DNS"*) ok "restore logged" ;;
     *) bad "restore not logged" ;;
 esac
 

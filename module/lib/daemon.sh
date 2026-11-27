@@ -205,8 +205,9 @@ module_off() { [ -f "$MODDIR/disable" ] || [ -f "$MODDIR/remove" ]; }
 #     creates "disable" or "remove". Without inotifyd we look every 10 s.
 #   - Every UNBOUND_POLL seconds (30) we look for stop/disable flags (shell
 #     builtins) and check that the redirect's jump is still in the small nat
-#     table (one iptables call). Legacy iptables announces no rule changes,
-#     so something else removing our rules can only be found by looking.
+#     table (one iptables-save, which takes no lock). Legacy iptables
+#     announces no rule changes, so rules removed by something else can only
+#     be found by looking; only the missing parts are put back.
 #   - Every UNBOUND_MAINT seconds (300) we do the heavier checks: the IPv6
 #     and DoT-block rules (the filter table is large), list refresh due,
 #     statistics, logs.
@@ -289,11 +290,11 @@ daemon_main() {
         if child_alive; then
             setting_var REDIRECT 1
             if [ "$_sv" = 1 ]; then
+                _scope=dns; [ "$_maint" = 1 ] && _scope=all
                 if [ "$_applied" = 0 ]; then
                     redirect_apply && _applied=1
-                elif ! redirect_active || { [ "$_maint" = 1 ] && ! redirect_intact; }; then
-                    log "redirect: rules were missing (removed by another app or service); putting them back"
-                    redirect_apply || _applied=0
+                elif redirect_missing "$_scope"; then
+                    redirect_repair || _applied=0
                 fi
                 if [ "$_pd_done" = 0 ] && [ "$(getprop sys.boot_completed 2>/dev/null)" = 1 ]; then
                     private_dns_disable && _pd_done=1
