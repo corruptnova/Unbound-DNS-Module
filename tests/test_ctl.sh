@@ -373,6 +373,33 @@ assert_eq "private dns restored" "hostname" "$(cat "$STUB_STATE/settings/private
 assert_eq "private dns spec restored" "dns.example.net" "$(cat "$STUB_STATE/settings/private_dns_specifier")"
 rm -f "$MOD/disable"
 
+# --- rules removed by something else are put back ---------------------------------
+v6_jump_present() { grep -qx -- '-j UNBOUND_DNS' "$STUB_STATE/ip6tables/nat/OUTPUT" 2>/dev/null; }
+dot_jump_present() { grep -qx -- '-j UNBOUND_DOT' "$STUB_STATE/iptables/filter/OUTPUT" 2>/dev/null; }
+# The IPv4 jump is checked at every poll (1 s here; maintenance far away).
+UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
+wait_for 10 jump_present
+sleep 1
+iptables -w -t nat -D OUTPUT -j UNBOUND_DNS
+wait_for 4 jump_present && pass || fail "nat jump restored at the next poll"
+assert_contains "restore logged" "redirect: rules were missing" "$(cat "$D/var/module.log")"
+# The rest (IPv6, DoT block) at maintenance.
+ip6tables -w -t nat -D OUTPUT -j UNBOUND_DNS
+iptables -w -D OUTPUT -j UNBOUND_DOT
+sleep 3
+v6_jump_present && fail "ipv6 jump restored before maintenance" || pass
+ctl stop >/dev/null
+wait_for 10 daemon_gone
+UNBOUND_MAINT=2 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
+wait_for 10 jump_present
+sleep 1
+ip6tables -w -t nat -D OUTPUT -j UNBOUND_DNS
+iptables -w -D OUTPUT -j UNBOUND_DOT
+wait_for 6 v6_jump_present && pass || fail "ipv6 jump restored at maintenance"
+wait_for 6 dot_jump_present && pass || fail "dot jump restored at maintenance"
+ctl stop >/dev/null
+wait_for 10 daemon_gone
+
 # --- disabling in the manager is noticed at once (inotifyd watches the folder) ---
 if command -v toybox >/dev/null 2>&1; then
     UNBOUND_POLL=60 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &

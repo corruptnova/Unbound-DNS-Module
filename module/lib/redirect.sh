@@ -50,13 +50,16 @@ _chains_add() {
     _ipt "$_i" -w -t nat -A "$NAT_CHAIN" -p tcp --dport 53 -j REDIRECT --to-ports "$UB_PORT" || return 1
 
     # Blocking 853 is a hardening extra: never fail the redirect over it.
+    rm -f "$RUN/dot.$_i"
     if _ipt "$_i" -w -N "$DOT_CHAIN" || _ipt "$_i" -w -F "$DOT_CHAIN"; then
         for _u in $(exempt_uids | awk '!seen[$0]++'); do
             _ipt "$_i" -w -A "$DOT_CHAIN" -m owner --uid-owner "$_u" -j RETURN
         done
         _ipt "$_i" -w -A "$DOT_CHAIN" -p tcp --dport 853 -j REJECT --reject-with tcp-reset
         _ipt "$_i" -w -A "$DOT_CHAIN" -p udp --dport 853 -j REJECT
-        _ipt "$_i" -w -C OUTPUT -j "$DOT_CHAIN" || _ipt "$_i" -w -I OUTPUT -j "$DOT_CHAIN"
+        if _ipt "$_i" -w -C OUTPUT -j "$DOT_CHAIN" || _ipt "$_i" -w -I OUTPUT -j "$DOT_CHAIN"; then
+            echo ok > "$RUN/dot.$_i"
+        fi
     fi
     # The jump into the redirect goes in last: once it exists (what
     # redirect_active checks), every other rule is already in place.
@@ -101,7 +104,24 @@ redirect_apply() {
 redirect_remove() {
     _chains_del iptables
     _chains_del ip6tables
-    rm -f "$RUN/redirect.v6" "$RUN/nat64.iptables" "$RUN/nat64.ip6tables"
+    rm -f "$RUN/redirect.v6" "$RUN/nat64.iptables" "$RUN/nat64.ip6tables" \
+        "$RUN/dot.iptables" "$RUN/dot.ip6tables"
 }
 
+# redirect_active: the IPv4 jump into the redirect is there. Reads only the
+# small nat table.
 redirect_active() { _ipt iptables -w -t nat -C OUTPUT -j "$NAT_CHAIN"; }
+
+# redirect_intact: every jump we installed is still there, including the
+# DoT block in the large filter table.
+redirect_intact() {
+    redirect_active || return 1
+    _ri=""; read -r _ri < "$RUN/dot.iptables" 2>/dev/null
+    if [ "$_ri" = ok ]; then _ipt iptables -w -C OUTPUT -j "$DOT_CHAIN" || return 1; fi
+    _ri=""; read -r _ri < "$RUN/redirect.v6" 2>/dev/null
+    [ "$_ri" = ok ] || return 0
+    _ipt ip6tables -w -t nat -C OUTPUT -j "$NAT_CHAIN" || return 1
+    _ri=""; read -r _ri < "$RUN/dot.ip6tables" 2>/dev/null
+    if [ "$_ri" = ok ]; then _ipt ip6tables -w -C OUTPUT -j "$DOT_CHAIN" || return 1; fi
+    return 0
+}

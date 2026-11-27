@@ -155,7 +155,7 @@ blocked="$(ctl status | sed -n 's/.*"blocked":\([0-9]*\).*/\1/p')"
 wait_until 15 "listed domain is blocked (doubleclick.net)" unresolvable doubleclick.net
 ctl allow-add doubleclick.net >/dev/null
 wait_until 15 "allowlisted domain resolves again" resolves doubleclick.net
-resolves www.wikipedia.org && ok "unlisted domain still resolves" || bad "unlisted domain"
+wait_until 15 "unlisted domain still resolves" resolves www.wikipedia.org
 
 say "own blocklist"
 ctl block-add '*.example.org' >/dev/null
@@ -213,6 +213,15 @@ say "redirect toggle (Action button)"
 sh_dev "ASH_STANDALONE=1 /data/adb/ksu/bin/busybox sh $MOD/action.sh" | grep -q "redirect: off" && ok "action turns redirect off" || bad "action off"
 redirect_inactive && ok "rules removed" || bad "rules still there"
 sh_dev "ASH_STANDALONE=1 /data/adb/ksu/bin/busybox sh $MOD/action.sh" | grep -q "redirect: on" && ok "action turns redirect on" || bad "action on"
+
+say "rules removed by something else"
+sh_dev "iptables -w -t nat -D OUTPUT -j UNBOUND_DNS"
+redirect_inactive && ok "redirect jump deleted" || bad "could not delete the jump"
+wait_until 40 "redirect put back within a poll" redirect_active
+case "$(sh_dev "cat /data/adb/unbound/var/module.log")" in
+    *"rules were missing"*) ok "restore logged" ;;
+    *) bad "restore not logged" ;;
+esac
 
 say "disable in manager"
 case "$(sh_dev "cat /data/adb/unbound/var/module.log")" in

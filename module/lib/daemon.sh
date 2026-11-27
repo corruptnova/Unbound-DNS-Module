@@ -203,10 +203,13 @@ module_off() { [ -f "$MODDIR/disable" ] || [ -f "$MODDIR/remove" ]; }
 #   - ctl.sh (WebUI, Action button) sends SIGUSR1 after changing anything.
 #   - inotifyd watches the module folder and wakes us the moment the manager
 #     creates "disable" or "remove". Without inotifyd we look every 10 s.
-#   - Every UNBOUND_POLL seconds (30) we look for stop/disable flags using
-#     shell builtins only, no extra processes.
-#   - Every UNBOUND_MAINT seconds (300) we do the heavier checks: the
-#     firewall rules are still there, list refresh due, statistics, logs.
+#   - Every UNBOUND_POLL seconds (30) we look for stop/disable flags (shell
+#     builtins) and check that the redirect's jump is still in the small nat
+#     table (one iptables call). Legacy iptables announces no rule changes,
+#     so something else removing our rules can only be found by looking.
+#   - Every UNBOUND_MAINT seconds (300) we do the heavier checks: the IPv6
+#     and DoT-block rules (the filter table is large), list refresh due,
+#     statistics, logs.
 
 # uptime_now: whole seconds since boot in $_now, without starting a process.
 uptime_now() { read -r _upt _x < /proc/uptime; _now="${_upt%%.*}"; }
@@ -286,10 +289,11 @@ daemon_main() {
         if child_alive; then
             setting_var REDIRECT 1
             if [ "$_sv" = 1 ]; then
-                # Re-apply if a network change flushed our rules (checked
-                # with iptables only every few minutes).
-                if [ "$_applied" = 0 ] || { [ "$_maint" = 1 ] && ! redirect_active; }; then
+                if [ "$_applied" = 0 ]; then
                     redirect_apply && _applied=1
+                elif ! redirect_active || { [ "$_maint" = 1 ] && ! redirect_intact; }; then
+                    log "redirect: rules were missing (removed by another app or service); putting them back"
+                    redirect_apply || _applied=0
                 fi
                 if [ "$_pd_done" = 0 ] && [ "$(getprop sys.boot_completed 2>/dev/null)" = 1 ]; then
                     private_dns_disable && _pd_done=1
