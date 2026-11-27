@@ -13,6 +13,8 @@ export STUB_STATE="$TMP/state"
 export UNBOUND_MODDIR="$MOD" UNBOUND_DATA="$TMP/data" UNBOUND_APPDATA="$TMP/appdata"
 export UNBOUND_NO_BUSYBOX_REEXEC=1 UNBOUND_POLL=1 UNBOUND_START_TIMEOUT=5 UNBOUND_APPLY_TIMEOUT=10
 export UNBOUND_IF_INET6="$TMP/if_inet6" UNBOUND_CA_BUNDLE="$TMP/ca.pem"
+mkdir -p "$TMP/cg/v2" "$TMP/cg/acct"; : > "$TMP/cg/v2/cgroup.procs"; : > "$TMP/cg/acct/cgroup.procs"
+export UNBOUND_CGROUPS="$TMP/cg/v2 $TMP/cg/acct $TMP/cg/missing"
 export PATH="$TESTS_DIR/stubs:$PATH"
 # A stand-in for /sys/fs/selinux: "context" exists only while a test says
 # the module's policy is loaded.
@@ -97,6 +99,23 @@ json="$(ctl lists)"
 assert_json "lists json" "$json"
 assert_contains "lists json has name" '"name":"Test hosts"' "$json"
 assert_contains "lists json has count" '"count":3' "$json"
+
+# Updates started from the WebUI leave the manager app's cgroups, so Android
+# stopping the app does not kill or freeze them.
+assert_eq "update left the app's cgroups (v2)" "1" "$(grep -c . "$TMP/cg/v2/cgroup.procs")"
+assert_eq "update left the app's cgroups (acct)" "1" "$(grep -c . "$TMP/cg/acct/cgroup.procs")"
+# A lock left by a killed update, its pid now used by another program, is
+# not an update in progress.
+/bin/sleep 30 & _other=$!   # a path, so not BusyBox's applet inside this test_ctl.sh shell
+mkdir -p "$D/run/update.lock"; echo "$_other" > "$D/run/update.lock/pid"
+assert_contains "stale lock: not updating" '"updating":false' "$(ctl status)"
+assert_ok "stale lock taken over" ctl update-lists
+kill "$_other" 2>/dev/null; wait "$_other" 2>/dev/null
+# A lock held by a live ctl.sh is respected.
+sh -c 'mkdir -p "$1/run/update.lock"; echo $$ > "$1/run/update.lock/pid"; sleep 30' ctl.sh "$D" & _holder=$!
+for _i in 1 2 3 4 5; do [ -f "$D/run/update.lock/pid" ] && break; sleep 1; done
+assert_contains "live lock: updating" '"updating":true' "$(ctl status)"
+kill "$_holder" 2>/dev/null; wait "$_holder" 2>/dev/null; rm -rf "$D/run/update.lock"
 
 # A failing download keeps the last good copy and records the error.
 touch "$STUB_STATE/curl.fail"

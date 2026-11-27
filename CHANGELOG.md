@@ -23,6 +23,12 @@ these notes.
   (`unbound_dns_data_file`), so the domain can be limited to it rather than
   all of `/data/adb`; it gets the usual label back when Unbound runs in the
   manager's domain.
+- Fix: a blocklist update started from the WebUI ran inside the root
+  manager app's cgroups, so Android killed or froze it along with the app;
+  its lock then stayed, and once Android reused its process id for another
+  program the WebUI showed "Updating blocklists…" for good. Updates and the
+  supervisor now move out of the app's cgroups first, and a lock counts only
+  while its holder is still the module's script.
 - Fix: the Action button could report "redirect: on" right after turning
   it off, while the rules were already being removed.
 

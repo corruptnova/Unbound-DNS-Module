@@ -142,14 +142,28 @@ ubctl() { "$BIN/unbound-control" -c "$CTRL_CONF" "$@"; }
 ub_read() { "$BIN/dropexec" read "$UB_UID" "$UB_UID" "$VAR" "$1" 1048576; }
 
 # lock NAME / unlock NAME: mkdir-based, stale locks (dead owner) are broken.
+# Locks are held by ctl.sh processes; a holder that was killed leaves its lock,
+# and its pid may be reused, so the holder must still be a ctl.sh.
 lock() {
     _l="$RUN/$1.lock"
     if mkdir "$_l" 2>/dev/null; then echo $$ > "$_l/pid"; return 0; fi
-    if ! alive "$(cat "$_l/pid" 2>/dev/null)"; then
+    if ! alive "$(cat "$_l/pid" 2>/dev/null)" ctl.sh; then
         rm -rf "$_l"
         mkdir "$_l" 2>/dev/null && { echo $$ > "$_l/pid"; return 0; }
     fi
     return 1
 }
 unlock() { rm -rf "$RUN/$1.lock"; }
-locked() { [ -d "$RUN/$1.lock" ] && alive "$(cat "$RUN/$1.lock/pid" 2>/dev/null)"; }
+locked() { [ -d "$RUN/$1.lock" ] && alive "$(cat "$RUN/$1.lock/pid" 2>/dev/null)" ctl.sh; }
+
+# leave_app_cgroups: a command started from the WebUI runs in the root
+# manager app's cgroups, and Android freezes or kills everything in them
+# when it stops the app. Work that must outlive the call (the supervisor,
+# list updates) moves itself to the top of each hierarchy first, as the root
+# managers do for module scripts.
+leave_app_cgroups() {
+    for _cg in ${UNBOUND_CGROUPS:-/acct /dev/cg2_bpf /sys/fs/cgroup /dev/memcg}; do
+        [ -f "$_cg/cgroup.procs" ] && { echo "$$" >> "$_cg/cgroup.procs"; } 2>/dev/null
+    done
+    return 0
+}

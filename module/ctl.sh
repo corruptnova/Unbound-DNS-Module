@@ -485,7 +485,7 @@ case "$cmd" in
     status) status_json ;;
     lists) lists_json ;;
     setup) setup_data ;;
-    daemon) daemon_main ;;
+    daemon) leave_app_cgroups; daemon_main ;;
     start) cmd_start ;;
     stop) cmd_stop ;;
     restart)
@@ -537,6 +537,7 @@ case "$cmd" in
             fi
             echo "update started"
         else
+            leave_app_cgroups
             lists_update "$_force"
         fi ;;
     rebuild) run_locked update 300 lists_rebuild ;;
