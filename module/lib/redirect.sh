@@ -49,9 +49,16 @@ _nat_chain() {
         _ipt "$_i" -w -t nat -A "$NAT_CHAIN" -m owner --uid-owner "$_u" -j RETURN || return 1
     done
     # Needs the kernel's string match; without it, keep redirecting anyway.
+    # Kernels before 6.5 read --to as the last offset the pattern may start
+    # at, newer ones as where it must end; so the name must be found in the
+    # question slot and, in a second match, nowhere after its first byte.
     if [ "$_i" = ip6tables ]; then _at="$NAT64_AT_V6"; else _at="$NAT64_AT_V4"; fi
-    if _ipt "$_i" -w -t nat -A "$NAT_CHAIN" -p udp --dport 53 -m string --algo bm --icase \
-            --from "$_at" --to "$((_at + NAT64_QNAME_LEN))" --hex-string "$NAT64_QNAME" -j RETURN; then
+    if _ipt "$_i" -w -t nat -A "$NAT_CHAIN" -p udp --dport 53 \
+            -m string --algo bm --icase --from "$_at" --to "$((_at + NAT64_QNAME_LEN))" \
+                --hex-string "$NAT64_QNAME" \
+            -m string --algo bm --icase --from "$((_at + 1))" --to 65535 \
+                ! --hex-string "$NAT64_QNAME" \
+            -j RETURN; then
         echo ok > "$RUN/nat64.$_i"
     else
         echo unsupported > "$RUN/nat64.$_i"

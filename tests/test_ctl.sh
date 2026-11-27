@@ -159,7 +159,7 @@ assert_contains "dot rejected" "-p tcp --dport 853 -j REJECT --reject-with tcp-r
 # Only as the question name: right after the DNS header.
 for fam in iptables ip6tables; do
     if [ "$fam" = iptables ]; then at=40; else at=60; fi
-    nat64_rule="-p udp --dport 53 -m string --algo bm --icase --from $at --to $((at + 15)) --hex-string |08|ipv4only|04|arpa|00| -j RETURN"
+    nat64_rule="-p udp --dport 53 -m string --algo bm --icase --from $at --to $((at + 15)) --hex-string |08|ipv4only|04|arpa|00| -m string --algo bm --icase --from $((at + 1)) --to 65535 ! --hex-string |08|ipv4only|04|arpa|00| -j RETURN"
     r="$(nat $fam UNBOUND_DNS)"
     assert_contains "$fam: NAT64 discovery bypass" "$nat64_rule" "$r"
     first_redirect="$(echo "$r" | grep -n REDIRECT | head -n 1 | cut -d: -f1)"
