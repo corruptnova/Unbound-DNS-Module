@@ -118,40 +118,69 @@ private_dns_restore() {
 # answers on the control socket. Blocklist loading can take a while.
 # --- SELinux: Unbound in its own domain ------------------------------------------
 #
-# sepolicy.rule (loaded by the root manager at boot) defines unbound_dns. This
-# build keeps it permissive, the learning stage: nothing is blocked, and each
-# kind of access is logged once, so the rules of an enforcing domain can be
-# written from real use. Without the policy (another root manager, or before
-# the reboot after installing) Unbound runs as before, in the manager's domain.
+# sepolicy.rule (loaded by the root manager at boot) defines unbound_dns and
+# the types of its binary and its folder. This build keeps the domain
+# permissive, the learning stage: nothing is blocked, and each kind of access
+# the rules do not allow is logged once, so the rules of an enforcing domain
+# can be written from real use. Without the policy (another root manager, or
+# before the reboot after installing) Unbound runs as before, in the manager's
+# domain, and its folder gets back the label all of /data/adb has.
 SE_DOMAIN=unbound_dns
 SE_MODE=learning
 SE_DENIALS="$LOGDIR/selinux-denials.txt"
 SE_FS="${UNBOUND_SELINUXFS:-/sys/fs/selinux}"
+SE_DATA="u:object_r:${SE_DOMAIN}_data_file:s0"
+SE_DATA_PLAIN="u:object_r:adb_data_file:s0"
+SE_LABELLED="$DATA/selinux.labelled"
 
-# se_known: the loaded policy knows the domain. The kernel checks a context
-# written to selinuxfs; chcon is no test, as root may set unknown labels.
+# se_known CONTEXT...: the loaded policy knows each context. The kernel checks
+# a context written to selinuxfs; chcon is no test, as root may set unknown
+# labels.
 se_known() {
     [ -e "$SE_FS/context" ] || return 1
-    printf 'u:r:%s:s0' "$SE_DOMAIN" | cat 1<> "$SE_FS/context" 2>/dev/null
+    for _c in "$@"; do
+        printf '%s' "$_c" | cat 1<> "$SE_FS/context" 2>/dev/null || return 1
+    done
 }
 
-# se_prepare: label the Unbound binary so it can enter its domain. Fails when
-# the policy does not have the domain (not loaded) or there is no runcon.
+# se_prepare: label the Unbound binary so it can enter its domain, and its
+# folder so the domain can be kept to it. Fails when the policy does not have
+# them (not loaded) or there is no runcon. New files in the folder take its
+# label. -h: never follow a symbolic link (Unbound's user can write var/).
 se_prepare() {
     [ -z "${UNBOUND_NO_SELINUX:-}" ] || return 1
     command -v runcon >/dev/null 2>&1 || return 1
-    se_known || return 1
-    chcon "u:object_r:${SE_DOMAIN}_exec:s0" "$BIN/unbound" 2>/dev/null
+    se_known "$SE_DATA" "u:r:$SE_DOMAIN:s0" || return 1
+    chcon "u:object_r:${SE_DOMAIN}_exec:s0" "$BIN/unbound" 2>/dev/null || return 1
+    : > "$SE_LABELLED"
+    chcon -hR "$SE_DATA" "$DATA" 2>/dev/null
 }
 
-# se_harvest: keep each kind of access logged for Unbound's domain, without
-# pids, inode numbers or addresses. Permissive denials are logged once per
-# kind and the kernel and logcat buffers roll over, so they are collected
-# while they last.
+# se_unlabel: Unbound runs in the manager's domain, so its folder needs no
+# label of its own; without the module's policy that label would mean nothing.
+se_unlabel() {
+    [ -f "$SE_LABELLED" ] || return 0
+    chcon -hR "$SE_DATA_PLAIN" "$DATA" 2>/dev/null && rm -f "$SE_LABELLED"
+}
+
+# se_round: denials are kept per version of the policy: a new one allows
+# more, so the list from the one before moves to selinux-denials.txt.old.
+se_round() {
+    _sp="# policy $(cksum < "$MODDIR/sepolicy.rule" 2>/dev/null | cut -d' ' -f1)"
+    if [ -s "$SE_DENIALS" ] && [ "$(head -n 1 "$SE_DENIALS")" != "$_sp" ]; then
+        mv -f "$SE_DENIALS" "$SE_DENIALS.old"
+    fi
+    [ -s "$SE_DENIALS" ] || echo "$_sp" > "$SE_DENIALS"
+}
+
+# se_harvest: keep each kind of access logged for Unbound's domain, and by
+# other domains to Unbound or its files, without pids, inode numbers or
+# addresses. Permissive denials are logged once per kind and the kernel and
+# logcat buffers roll over, so they are collected while they last.
 se_harvest() {
-    : >> "$SE_DENIALS"
+    se_round
     { dmesg 2>/dev/null; logcat -d -b all 2>/dev/null; } \
-        | grep -F "scontext=u:r:$SE_DOMAIN:" \
+        | grep -F -e "scontext=u:r:$SE_DOMAIN:" -e "tcontext=u:r:$SE_DOMAIN:" -e "tcontext=u:object_r:${SE_DOMAIN}_" \
         | LC_ALL=C awk -v known="$SE_DENIALS" '
             function key(s,    p, a, b, c) {
                 p = s; sub(/^.*denied +\{ */, "", p); sub(/ *\}.*/, "", p)
@@ -185,6 +214,7 @@ start_unbound() {
         log "selinux: Unbound could not start in its own domain (${_se_err:-unknown}); running it in the root manager's domain until the supervisor restarts"
         return 0
     fi
+    se_unlabel
     _launch || return 1
     if [ -f "$RUN/selinux.fallback" ]; then echo fallback; else echo unconfined; fi > "$RUN/selinux"
 }

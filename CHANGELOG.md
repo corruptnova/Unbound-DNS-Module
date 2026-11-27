@@ -19,7 +19,10 @@ these notes.
   written from real use. If Unbound cannot start in its domain, it starts the
   old way and the reason is shown. Without the policy (another root manager,
   or before the reboot after installing) nothing changes. The WebUI shows
-  the domain in the statistics.
+  the domain in the statistics. Unbound's folder gets its own SELinux type
+  (`unbound_dns_data_file`), so the domain can be limited to it rather than
+  all of `/data/adb`; it gets the usual label back when Unbound runs in the
+  manager's domain.
 - Fix: the Action button could report "redirect: on" right after turning
   it off, while the rules were already being removed.
 

@@ -460,8 +460,21 @@ assert_contains "started in its domain" "runcon -- u:r:unbound_dns:s0 $MOD/bin/u
 # The stub parses like BusyBox's runcon, which took Unbound's -d for its own
 # option when no "--" came first.
 assert_contains "BusyBox-style runcon needs --" "Usage: runcon" "$(runcon u:r:unbound_dns:s0 /bin/true -d 2>&1)"
-assert_eq "context checked with the kernel" "u:r:unbound_dns:s0" "$(cat "$SEFS/context")"
+assert_contains "context checked with the kernel" "u:r:unbound_dns:s0" "$(cat "$SEFS/context")"
+# Its folder gets its own type, without following symbolic links.
+assert_contains "folder labelled" "chcon -hR u:object_r:unbound_dns_data_file:s0 $D" "$(cat "$STUB_STATE/calls.log")"
+[ -f "$D/selinux.labelled" ] && pass || fail "folder label not recorded"
 ctl stop >/dev/null; wait_for 10 daemon_gone
+# The policy is gone (another root manager): the folder gets back the label
+# all of /data/adb has.
+rm -f "$SEFS/context"; : > "$STUB_STATE/calls.log"
+UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
+wait_for 10 jump_present
+assert_eq "policy gone: unconfined" "unconfined" "$(se_state)"
+assert_contains "folder label restored" "chcon -hR u:object_r:adb_data_file:s0 $D" "$(cat "$STUB_STATE/calls.log")"
+[ ! -f "$D/selinux.labelled" ] && pass || fail "folder label still recorded"
+ctl stop >/dev/null; wait_for 10 daemon_gone
+: > "$SEFS/context"
 # The domain does not work: run Unbound the old way and say why.
 touch "$STUB_STATE/runcon.fail"
 UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
@@ -476,17 +489,23 @@ cat > "$STUB_STATE/dmesg.txt" <<'EOF'
 [   12.3] audit: type=1400 audit(1.2:3): avc:  denied  { read } for  pid=1234 comm="unbound" name="root.key" dev="dm-5" ino=42 scontext=u:r:unbound_dns:s0 tcontext=u:object_r:adb_data_file:s0 tclass=file permissive=1
 [   12.4] audit: type=1400 audit(1.2:4): avc:  denied  { read } for  pid=999 comm="unbound" name="root.key" dev="dm-5" ino=43 scontext=u:r:unbound_dns:s0 tcontext=u:object_r:adb_data_file:s0 tclass=file permissive=1
 [   12.5] audit: type=1400 audit(1.2:5): avc:  denied  { read } for  pid=5 comm="other" scontext=u:r:untrusted_app:s0 tcontext=u:object_r:system_file:s0 tclass=file permissive=0
+[   12.7] audit: type=1400 audit(1.2:6): avc:  denied  { use } for  pid=77 comm="netd" path="socket:[1]" dev="sockfs" ino=1 scontext=u:r:netd:s0 tcontext=u:r:unbound_dns:s0 tclass=fd permissive=0
 [   12.6] audit: audit_lost=3 audit_rate_limit=5 audit_backlog_limit=64
 [   13.0] audit: audit_lost=7 audit_rate_limit=5 audit_backlog_limit=64
 EOF
 printf '%s\n' '11-27 10:00:00.000  1234  1234 W unbound : type=1400 audit(0.0:7): avc:  denied  { name_bind } for  src=5335 scontext=u:r:unbound_dns:s0 tcontext=u:object_r:port:s0 tclass=udp_socket permissive=1' > "$STUB_STATE/logcat.txt"
 report="$(ctl selinux-report)"
-assert_eq "two kinds kept" "2" "$(printf '%s\n' "$report" | grep -c 'avc: denied')"
+assert_eq "three kinds kept" "3" "$(printf '%s\n' "$report" | grep -c 'avc: denied')"
+assert_contains "other domains acting on Unbound kept" "scontext=u:r:netd:s0 tcontext=u:r:unbound_dns:s0 tclass=fd" "$report"
 assert_not_contains "pids dropped" "pid=" "$report"
 assert_contains "dropped audit messages shown" "dropped since boot (all apps): 7" "$report"
 assert_contains "socket kind kept" "{ name_bind }" "$report"
 assert_not_contains "other domains ignored" "untrusted_app" "$report"
-assert_eq "kept across reports" "2" "$(rm -f "$STUB_STATE/dmesg.txt"; ctl selinux-report | grep -c 'avc: denied')"
+assert_eq "kept across reports" "3" "$(rm -f "$STUB_STATE/dmesg.txt"; ctl selinux-report | grep -c 'avc: denied')"
+# A new policy allows more: its list starts empty, the old one is kept aside.
+echo "# changed" >> "$MOD/sepolicy.rule"
+assert_eq "new policy, new list" "0" "$(rm -f "$STUB_STATE/logcat.txt"; ctl selinux-report | grep -c 'avc: denied')"
+assert_eq "old list kept" "3" "$(grep -c 'avc: denied' "$D/log/selinux-denials.txt.old")"
 assert_contains "diagnostics include them" "== SELinux" "$(ctl diag)"
 rm -f "$STUB_STATE/selinux" "$STUB_STATE/logcat.txt" "$SEFS/context"
 

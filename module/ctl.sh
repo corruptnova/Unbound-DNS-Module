@@ -418,7 +418,8 @@ cmd_selinux_report() {
         [ -n "$_ctx" ] || _ctx="unknown"
     fi
     _st="$(cat "$RUN/selinux" 2>/dev/null)"
-    echo "state: ${_st:-unknown}; Unbound's context: $_ctx"
+    _lbl="$(ls -Zd "$DATA" 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^u:object_r:/) { print $i; exit } }')"
+    echo "state: ${_st:-unknown}; Unbound's context: $_ctx; its folder: ${_lbl:-unknown}"
     if [ -s "$RUN/selinux.fallback" ]; then
         echo "fell back because: $(cat "$RUN/selinux.fallback")"
     fi

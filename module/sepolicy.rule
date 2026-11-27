@@ -1,29 +1,108 @@
-# Unbound's own SELinux domain, learning stage.
+# Unbound's own SELinux domain, learning stage (second round).
 #
 # The root manager loads this at boot. Unbound enters unbound_dns through its
-# binary, which the module labels unbound_dns_exec before every start (see
-# lib/daemon.sh). For now the domain is permissive: nothing is blocked, and
-# each kind of access it makes is logged once ("ctl.sh selinux-report"), so
-# the rules of an enforcing domain can be written from real use.
+# binary, which the module labels unbound_dns_exec before every start, and its
+# folder (/data/adb/unbound) gets its own type, unbound_dns_data_file, so the
+# domain can be kept to those files rather than all of /data/adb (see
+# lib/daemon.sh). The domain is still permissive: nothing is blocked, and each
+# kind of access not allowed below is logged once ("ctl.sh selinux-report").
+# The rules below are what the first round logged; with them, the next round
+# logs only what is still missing.
 #
-# Statements naming a type this device does not have are skipped.
+# A statement naming a type or permission this device does not have is
+# skipped, so types that only some devices have get statements of their own,
+# and each statement names only permissions all its classes have.
 
 type unbound_dns domain
 type unbound_dns_exec { file_type exec_type }
+type unbound_dns_data_file { file_type data_file_type }
+typeattribute unbound_dns netdomain
 permissive unbound_dns
 allow unbound_dns_exec labeledfs filesystem associate
+allow unbound_dns_data_file labeledfs filesystem associate
 
-# The root managers' own domains: label the binary, start Unbound in its
-# domain, then watch, signal and talk to it (unbound-control).
-allow ksu unbound_dns_exec file { getattr open read execute map relabelfrom relabelto }
+# --- Unbound ------------------------------------------------------------------
+# Android's rules for all domains reach a new domain only where they name other
+# types; the ones about a process's own resources must be given here.
+allow unbound_dns self process { fork sigchld signal signull sigkill getsched setsched getattr getpgid setpgid getsession getcap setcap setrlimit }
+allow unbound_dns self fd use
+allow unbound_dns self dir { getattr open read search }
+allow unbound_dns self file { getattr open read }
+allow unbound_dns self lnk_file { getattr read }
+allow unbound_dns self fifo_file { getattr read write }
+# Root until it has bound its ports and chrooted, then the inet user.
+allow unbound_dns self capability { chown setuid setgid sys_chroot net_admin dac_read_search }
+
+# Its binary.
+allow unbound_dns unbound_dns_exec file { entrypoint execute read open getattr }
+allow unbound_dns unbound_dns_exec file map
+
+# Its folder: configuration, blocklists, CA bundle, trust anchor, control
+# socket, and the log (its stderr). The way there, through /data/adb.
+allow unbound_dns adb_data_file dir { search getattr }
+allow unbound_dns unbound_dns_data_file dir { search getattr open read write add_name remove_name }
+allow unbound_dns unbound_dns_data_file file { getattr open read ioctl lock append write create rename unlink setattr }
+allow unbound_dns unbound_dns_data_file file map
+allow unbound_dns unbound_dns_data_file sock_file { create unlink setattr getattr write }
+allow unbound_dns unbound_dns_data_file lnk_file { getattr read }
+
+# Sockets: DNS on 5335, queries out (UDP, TCP, TLS on 853), the control
+# socket, network interfaces (netlink), and Android's socket marking (netd).
+allow unbound_dns self { udp_socket tcp_socket } { create bind connect listen accept read write getattr setattr getopt setopt shutdown ioctl }
+allow unbound_dns self unix_stream_socket { create bind connect listen accept read write getattr setattr getopt setopt shutdown }
+allow unbound_dns self unix_dgram_socket { create bind connect read write getattr setattr getopt setopt shutdown }
+allow unbound_dns self netlink_route_socket { create bind connect read write getattr setattr getopt setopt shutdown nlmsg_read }
+allow unbound_dns self netlink_route_socket nlmsg_readpriv
+allow unbound_dns port { udp_socket tcp_socket } name_bind
+allow unbound_dns port tcp_socket name_connect
+allow unbound_dns node { udp_socket tcp_socket } node_bind
+allow unbound_dns fwmarkd_socket sock_file write
+allow unbound_dns netd unix_stream_socket connectto
+
+# The dynamic linker resolves the folders named in /linkerconfig/ld.config.txt
+# at every start (it runs as root then).
+allow unbound_dns system_data_root_file dir read
+allow unbound_dns shell_data_file dir { getattr search read }
+allow unbound_dns shell_test_data_file dir { getattr search read }
+allow unbound_dns vendor_file dir read
+allow unbound_dns postinstall_mnt_dir dir getattr
+
+# --- the root managers' domains -------------------------------------------------
+# Label Unbound's binary and folder, start Unbound in its domain, then watch,
+# signal and talk to it (unbound-control). Unbound gets the output files it
+# inherits and may tell its parent it exited.
+allow ksu unbound_dns_exec file { getattr open read execute relabelfrom relabelto }
+allow ksu unbound_dns_exec file map
+allow ksu unbound_dns_data_file dir { getattr setattr open read write search add_name remove_name create rmdir rename reparent ioctl lock relabelfrom relabelto }
+allow ksu unbound_dns_data_file { file lnk_file sock_file fifo_file } { getattr setattr open read write append create unlink rename link ioctl lock relabelfrom relabelto }
+allow ksu unbound_dns_data_file file map
 allow ksu unbound_dns process { transition siginh rlimitinh noatsecure signal sigkill signull getattr }
-allow ksu unbound_dns { dir file lnk_file } { getattr open read search }
+allow ksu unbound_dns dir { getattr open read search }
+allow ksu unbound_dns { file lnk_file } { getattr open read }
 allow ksu unbound_dns unix_stream_socket connectto
-allow magisk unbound_dns_exec file { getattr open read execute map relabelfrom relabelto }
+allow unbound_dns ksu fd use
+allow unbound_dns ksu process sigchld
+
+allow magisk unbound_dns_exec file { getattr open read execute relabelfrom relabelto }
+allow magisk unbound_dns_exec file map
+allow magisk unbound_dns_data_file dir { getattr setattr open read write search add_name remove_name create rmdir rename reparent ioctl lock relabelfrom relabelto }
+allow magisk unbound_dns_data_file { file lnk_file sock_file fifo_file } { getattr setattr open read write append create unlink rename link ioctl lock relabelfrom relabelto }
+allow magisk unbound_dns_data_file file map
 allow magisk unbound_dns process { transition siginh rlimitinh noatsecure signal sigkill signull getattr }
-allow magisk unbound_dns { dir file lnk_file } { getattr open read search }
+allow magisk unbound_dns dir { getattr open read search }
+allow magisk unbound_dns { file lnk_file } { getattr open read }
 allow magisk unbound_dns unix_stream_socket connectto
-allow su unbound_dns_exec file { getattr open read execute map relabelfrom relabelto }
+allow unbound_dns magisk fd use
+allow unbound_dns magisk process sigchld
+
+allow su unbound_dns_exec file { getattr open read execute relabelfrom relabelto }
+allow su unbound_dns_exec file map
+allow su unbound_dns_data_file dir { getattr setattr open read write search add_name remove_name create rmdir rename reparent ioctl lock relabelfrom relabelto }
+allow su unbound_dns_data_file { file lnk_file sock_file fifo_file } { getattr setattr open read write append create unlink rename link ioctl lock relabelfrom relabelto }
+allow su unbound_dns_data_file file map
 allow su unbound_dns process { transition siginh rlimitinh noatsecure signal sigkill signull getattr }
-allow su unbound_dns { dir file lnk_file } { getattr open read search }
+allow su unbound_dns dir { getattr open read search }
+allow su unbound_dns { file lnk_file } { getattr open read }
 allow su unbound_dns unix_stream_socket connectto
+allow unbound_dns su fd use
+allow unbound_dns su process sigchld
