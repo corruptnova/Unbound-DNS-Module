@@ -21,6 +21,10 @@ way a future Unbound or curl bug could have been turned into root):
 - The NAT64 discovery exemption only lets through a query for exactly
   `ipv4only.arpa`. Before, any DNS packet containing those bytes skipped
   Unbound and the blocklists.
+- Builds and automatic updates check each source tarball's release
+  signature against the project's pinned key (NLnet Labs, OpenSSL, expat's
+  and curl's maintainers), not only a checksum. A release signed with any
+  other key stops the update. GitHub Actions are pinned to commit hashes.
 
 - Much lighter on battery: the supervisor no longer checks everything every
   10 seconds. It reacts at once when Unbound exits or a setting changes,

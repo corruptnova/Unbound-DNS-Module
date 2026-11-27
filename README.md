@@ -94,16 +94,19 @@ sh tests/run.sh          # shell tests; node tests/webui/webui.test.cjs for the 
 What goes into the zip:
 - **Unbound** (`unbound`, `unbound-control`, `unbound-anchor`), statically
   linked with **OpenSSL 3.5 LTS** and **expat**;
-- an HTTPS-only **curl** for list downloads.
+- an HTTPS-only **curl** for list downloads, run as an unprivileged user
+  through a small helper (`dropexec`, in `src/`).
 
-Every source tarball is checked against the sha256 pinned in
-`versions.env`.
+Every source tarball must carry a good release signature from its project's
+key in `keys/` (see `keys/README.md`) and match the sha256 pinned in
+`versions.env`. GitHub Actions are pinned to commit hashes.
 
 **Releases:**
 - **ci** runs on every push: lint, tests, builds for all three
   architectures, and an Android emulator smoke test.
-- **check-updates** runs daily on `main`. It pins new upstream versions,
-  then builds, tests and publishes a release.
+- **check-updates** runs daily on `main`. It pins new upstream versions
+  whose signatures check out, then builds, tests and publishes a release.
+  A release signed with an unknown key stops it until `keys/` is updated.
 - **release** publishes when you push a `v<unbound>-r<revision>` tag. After
   script-only changes, bump `MODULE_REVISION` first.
 

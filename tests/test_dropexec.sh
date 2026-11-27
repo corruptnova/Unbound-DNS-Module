@@ -12,12 +12,16 @@ assert_ok "builds without warnings" "$CC" -O2 -Wall -Wextra -Werror -o "$DX" "$R
 
 # A root-only folder, like /data/adb on the phone.
 P="$TMP/private"; mkdir -p "$P/bin" "$P/var"; chmod 0700 "$P"
-cp "$(command -v id)" "$P/bin/id"
+# The test program is a copy of the shell: multi-call binaries such as
+# uutils' id pick their tool from the name they were run under, which is
+# /dev/fd/N here (curl, the real user, does not care).
+cp "$(command -v dash || command -v sh)" "$P/bin/sh"
+ids() { "$DX" run 9999 9999 "$1" "$P/bin/sh" -c "id $2"; }
 echo ca-data > "$P/ca.pem"; chmod 0644 "$P/ca.pem"
 
-assert_eq "runs as the given user" "9999" "$("$DX" run 9999 9999 3003 "$P/bin/id" -u)"
-assert_eq "with only the given groups" "3003 9999" "$("$DX" run 9999 9999 3003 "$P/bin/id" -G | tr ' ' '\n' | sort -n | tr '\n' ' ' | sed 's/ $//')"
-assert_eq "no supplementary groups with -" "9999" "$("$DX" run 9999 9999 - "$P/bin/id" -G)"
+assert_eq "runs as the given user" "9999" "$(ids 3003 -u)"
+assert_eq "with only the given groups" "3003 9999" "$(ids 3003 -G | tr ' ' '\n' | sort -n | tr '\n' ' ' | sed 's/ $//')"
+assert_eq "no supplementary groups with -" "9999" "$(ids - -G)"
 status="$("$DX" run 9999 9999 - /bin/sh -c 'grep -E "^(CapEff|CapPrm|NoNewPrivs):" /proc/self/status' | tr -s ' \t' ' ')"
 assert_contains "no capabilities left" "CapEff: 0000000000000000" "$status"
 assert_contains "no permitted capabilities" "CapPrm: 0000000000000000" "$status"

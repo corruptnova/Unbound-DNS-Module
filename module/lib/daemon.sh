@@ -131,7 +131,10 @@ start_unbound() {
             _out="$(tail -c +"$_mark" "$UBLOG" | grep -v '^[[:space:]]*$')"
             log "unbound: failed to start: $(printf '%s\n' "$_out" | tail -n 3 | tr '\n' ' ')"
             # Kept until a start succeeds, for status and rollback messages.
-            printf '%s\n' "$_out" | tail -n 2 | tr '\n' ' ' > "$RUN/start_error"
+            # Replaced in one step so a status read never sees it empty.
+            [ -n "$_out" ] || _out="Unbound exited during start without a message"
+            printf '%s\n' "$_out" | tail -n 2 | tr '\n' ' ' > "$RUN/start_error.new"
+            mv -f "$RUN/start_error.new" "$RUN/start_error"
             rm -f "$RUN/unbound.pid"
             return 1
         fi

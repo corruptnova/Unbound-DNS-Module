@@ -5,10 +5,9 @@
 #   scripts/update-versions.sh --fill     keep versions, only pin missing sha256
 #   scripts/update-versions.sh --check    print latest versions, change nothing
 #
-# Versions are discovered with `git ls-remote` (no API rate limits). Unbound
-# and OpenSSL tarballs are checked against the checksums their projects
-# publish; expat and curl publish none, so their sha256 is recorded on first
-# download and every later build must match it.
+# Versions are discovered with `git ls-remote` (no API rate limits). Before a
+# tarball's sha256 is pinned, its release signature must verify against the
+# project's key in keys/ (only that key); builds check both again.
 #
 # Revision rule: a new Unbound resets MODULE_REVISION to 1; a dependency-only
 # update increments it.
@@ -49,21 +48,17 @@ tarball_url() {
     esac
 }
 
-# sha_for NAME VERSION -> sha256 of the release tarball, verified where possible
+# sha_for NAME VERSION -> sha256 of the release tarball, once its signature
+# checks out against keys/<name>.asc
 sha_for() {
-    local name="$1" ver="$2" url tmp sha published
+    local name="$1" ver="$2" url tmp sha
     url="$(tarball_url "$name" "$ver")"
-    tmp="$(mktemp)"
-    curl -fsSL --retry 3 -o "$tmp" "$url" || { rm -f "$tmp"; die "cannot download $url"; }
-    sha="$(sha256sum "$tmp" | cut -d' ' -f1)"
-    rm -f "$tmp"
-    case "$name" in
-        UNBOUND|OPENSSL)
-            published="$(curl -fsSL --retry 3 "$url.sha256" | grep -oE '[0-9a-f]{64}' | head -n 1)" \
-                || die "cannot fetch published checksum $url.sha256"
-            [ "$sha" = "$published" ] || die "checksum mismatch for $url: got $sha, published $published"
-            ;;
-    esac
+    tmp="$(mktemp -d)"
+    curl -fsSL --retry 3 -o "$tmp/src" "$url" || { rm -rf "$tmp"; die "cannot download $url"; }
+    curl -fsSL --retry 3 -o "$tmp/src.asc" "$url.asc" || { rm -rf "$tmp"; die "cannot download $url.asc"; }
+    verify_signature "${name,,}" "$tmp/src" "$tmp/src.asc"
+    sha="$(sha256sum "$tmp/src" | cut -d' ' -f1)"
+    rm -rf "$tmp"
     echo "$sha"
 }
 

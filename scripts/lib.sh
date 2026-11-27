@@ -20,20 +20,45 @@ load_versions() {
     done < "$ROOT_DIR/versions.env"
 }
 
-# fetch_verified URL SHA256 DEST
-# Downloads URL to DEST unless DEST already has the right hash.
-fetch_verified() {
-    local url="$1" sha="$2" dest="$3"
-    [ -n "$sha" ] || die "no sha256 pinned for $(basename "$dest"); run scripts/update-versions.sh"
-    if [ -f "$dest" ] && echo "$sha  $dest" | sha256sum -c --status; then
-        return 0
+# verify_signature NAME FILE SIG
+# SIG is a good signature of FILE by the release key pinned in keys/NAME.asc,
+# and only that key (see keys/README.md).
+verify_signature() {
+    local name="$1" file="$2" sig="$3" key="$ROOT_DIR/keys/$1.asc" tmp
+    [ -f "$key" ] || die "no release key pinned for $name (keys/$name.asc)"
+    command -v gpg >/dev/null 2>&1 && command -v gpgv >/dev/null 2>&1 \
+        || die "gpg and gpgv are needed to check release signatures (install gnupg)"
+    tmp="$(mktemp -d)"
+    if ! { gpg --batch --quiet --homedir "$tmp" --dearmor < "$key" > "$tmp/ring.gpg" \
+            && gpgv --homedir "$tmp" --keyring "$tmp/ring.gpg" "$sig" "$file" > /dev/null 2> "$tmp/out"; }; then
+        cat "$tmp/out" >&2
+        rm -rf "$tmp"
+        die "bad or missing $name release signature for $(basename "$file")"
     fi
-    mkdir -p "$(dirname "$dest")"
-    log "downloading $url"
-    curl -fsSL --retry 3 --retry-delay 5 -o "$dest.part" "$url" || die "download failed: $url"
-    echo "$sha  $dest.part" | sha256sum -c --status \
-        || die "sha256 mismatch for $url (expected $sha, got $(sha256sum "$dest.part" | cut -d' ' -f1))"
-    mv "$dest.part" "$dest"
+    rm -rf "$tmp"
+}
+
+# fetch_verified URL SHA256 DEST [KEY]
+# Downloads URL to DEST unless DEST already has the right hash. With KEY,
+# also fetches URL.asc and checks it against keys/KEY.asc, every time.
+fetch_verified() {
+    local url="$1" sha="$2" dest="$3" key="${4:-}"
+    [ -n "$sha" ] || die "no sha256 pinned for $(basename "$dest"); run scripts/update-versions.sh"
+    if ! { [ -f "$dest" ] && echo "$sha  $dest" | sha256sum -c --status; }; then
+        mkdir -p "$(dirname "$dest")"
+        log "downloading $url"
+        curl -fsSL --retry 3 --retry-delay 5 -o "$dest.part" "$url" || die "download failed: $url"
+        echo "$sha  $dest.part" | sha256sum -c --status \
+            || die "sha256 mismatch for $url (expected $sha, got $(sha256sum "$dest.part" | cut -d' ' -f1))"
+        mv "$dest.part" "$dest"
+    fi
+    if [ -n "$key" ]; then
+        if [ ! -s "$dest.asc" ]; then
+            curl -fsSL --retry 3 --retry-delay 5 -o "$dest.asc.part" "$url.asc" || die "download failed: $url.asc"
+            mv "$dest.asc.part" "$dest.asc"
+        fi
+        verify_signature "$key" "$dest" "$dest.asc"
+    fi
 }
 
 # abi_triple ABI -> clang target triple prefix (without API level)

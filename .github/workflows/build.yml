@@ -17,7 +17,7 @@ jobs:
   versions:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ inputs.ref }}
       - name: Pin any missing source checksums
@@ -27,7 +27,7 @@ jobs:
             echo "::warning title=Unpinned sources::versions.env had empty sha256 pins; they were filled from this download. Commit them:"
             git diff versions.env
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: versions
           path: versions.env
@@ -35,7 +35,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ inputs.ref }}
       - name: Install test tools
@@ -51,7 +51,7 @@ jobs:
             tests/*.sh tests/stubs/getprop tests/stubs/getevent tests/stubs/inotifyd tests/stubs/iptables tests/stubs/iptables-save tests/stubs/settings tests/stubs/bin/*
       - name: Shell tests (busybox ash)
         run: sudo sh tests/run.sh
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
           node-version: 22
       - name: WebUI test
@@ -59,7 +59,7 @@ jobs:
           npm install --no-save --prefix tests/webui playwright@1.63.0
           npx --prefix tests/webui playwright install --with-deps chromium
           node tests/webui/webui.test.cjs --screenshots webui-screenshots
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         if: always()
         with:
           name: webui-screenshots
@@ -74,13 +74,13 @@ jobs:
       matrix:
         abi: [arm64-v8a, armeabi-v7a, x86_64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ inputs.ref }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
           name: versions
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: .cache/src
           key: src-${{ hashFiles('versions.env') }}
@@ -90,11 +90,11 @@ jobs:
         run: |
           file out/${{ matrix.abi }}/unbound out/${{ matrix.abi }}/unbound-control out/${{ matrix.abi }}/unbound-anchor out/${{ matrix.abi }}/curl
           cat out/${{ matrix.abi }}/BUILDINFO
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: bin-${{ matrix.abi }}
           path: out/${{ matrix.abi }}/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         if: failure()
         with:
           name: build-logs-${{ matrix.abi }}
@@ -104,13 +104,13 @@ jobs:
     needs: [versions, test, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ inputs.ref }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
           name: versions
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
           pattern: bin-*
           path: out/
@@ -121,7 +121,7 @@ jobs:
           for d in out/bin-*; do mv "$d" "out/${d#out/bin-}"; done
           scripts/package.sh
           ls -la dist/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: module
           path: dist/
@@ -131,10 +131,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ inputs.ref }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
           name: module
           path: dist/
@@ -149,7 +149,7 @@ jobs:
           sudo apt-get install -y -qq busybox-static >/dev/null
           file /bin/busybox
       - name: Smoke test on Android 14 (x86_64)
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d  # v2.38.0
         with:
           api-level: 34
           target: google_apis

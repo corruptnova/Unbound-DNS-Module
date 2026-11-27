@@ -55,7 +55,7 @@ prepare_src() {
     else
         local tarball
         tarball="$CACHE_DIR/src/$(basename "$url")"
-        fetch_verified "$url" "$sha" "$tarball"
+        fetch_verified "$url" "$sha" "$tarball" "$name"
         rm -rf "$dir"; mkdir -p "$dir"
         tar -xf "$tarball" -C "$dir" --strip-components=1
     fi
