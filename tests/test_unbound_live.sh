@@ -20,11 +20,16 @@ cp "$UCTL" "$TMP/unbound-control" && UCTL="$TMP/unbound-control"
 
 T="$TMP/data"
 PORT=53535
-mkdir -p "$T/var"
-# Same files the module installs, with the chroot/user switched off and
-# paths moved to a temp dir.
+mkdir -p "$T/var" "$T/run"
+# Like on the phone, Unbound starts as root and switches to an unprivileged
+# user ("nobody" here, "inet" there): the control socket in the root-only
+# run/ folder and reloads must keep working after the switch.
+UB_USER=""
+if id nobody >/dev/null 2>&1; then UB_USER=nobody; UB_GROUP="$(id -gn nobody)"; fi
+# Same files the module installs, with the chroot off and paths moved to a
+# temp dir.
 for f in unbound.conf control.conf custom.conf; do
-    sed -e "s|/data/adb/unbound|$T|g" -e 's|^\( *username:\).*|\1 ""|' \
+    sed -e "s|/data/adb/unbound|$T|g" -e "s|^\\( *username:\\).*|\\1 \"$UB_USER\"|" \
         -e 's|^\( *chroot:\).*|\1 ""|' -e "s|5335|$PORT|g" \
         "$REPO_DIR/module/conf/$f" > "$T/$f"
 done
@@ -63,18 +68,30 @@ if [ -n "$CHECK" ]; then
     assert_ok "unbound-checkconf" "$CHECK" "$T/unbound.conf"
 fi
 
+if [ -n "$UB_USER" ]; then
+    chmod 0711 "$TMP"
+    chown -R "root:$UB_GROUP" "$T"; chmod -R g+rX,o-rwx "$T"
+    chown -R "$UB_USER:$UB_GROUP" "$T/var"
+    chown root:root "$T/run"; chmod 0700 "$T/run"
+else
+    echo "note: no 'nobody' user; Unbound keeps running as root in this test"
+fi
 "$UNBOUND" -d -c "$T/unbound.conf" > "$TMP/unbound.out" 2>&1 &
 UB=$!
 trap 'kill $UB 2>/dev/null; rm -rf "$TMP"' EXIT
 i=0
 until "$UCTL" -c "$T/control.conf" status >/dev/null 2>&1; do
     i=$((i + 1))
-    if [ $i -gt 50 ]; then cat "$TMP/unbound.out" "$T/var/unbound.log" 2>/dev/null; fail "unbound did not start"; done_testing; exit 1; fi
+    if [ $i -gt 50 ]; then cat "$TMP/unbound.out" 2>/dev/null; fail "unbound did not start"; done_testing; exit 1; fi
     sleep 0.2
 done
 pass
 
 q() { dig +time=3 +tries=1 @127.0.0.1 -p "$PORT" "$@"; }
+if [ -n "$UB_USER" ]; then
+    assert_eq "unbound switched to $UB_USER" "$(id -u "$UB_USER")" \
+        "$(awk '/^Uid:/ { print $2 }' "/proc/$UB/status")"
+fi
 assert_contains "blocked name is NXDOMAIN" "status: NXDOMAIN" "$(q ads.example.com A)"
 assert_contains "blocked subdomain is NXDOMAIN" "status: NXDOMAIN" "$(q x.y.ads.example.com A)"
 assert_contains "other blocked zone" "status: NXDOMAIN" "$(q other.test AAAA)"
@@ -97,6 +114,12 @@ printf 'U null.example\n' | lists_merge "$T/blocklist.conf" "$T/count" always_nu
 "$UCTL" -c "$T/control.conf" reload_keep_cache >/dev/null 2>&1
 assert_eq "always_null answers 0.0.0.0" "0.0.0.0" "$(q +short null.example A)"
 assert_eq "always_null answers ::" "::" "$(q +short null.example AAAA)"
-assert_ok "log written" test -s "$T/var/unbound.log"
+assert_contains "logs to stderr (saved by the module)" "start of service" "$(cat "$TMP/unbound.out")"
+others=""
+for f in "$T"/var/* "$T"/var/.[!.]*; do
+    [ -e "$f" ] || continue
+    case "${f##*/}" in root.key|root.key.*) ;; *) others="$others ${f##*/}" ;; esac
+done
+assert_eq "var/ holds only root.key" "" "$others"
 
 done_testing

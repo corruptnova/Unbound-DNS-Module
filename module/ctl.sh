@@ -146,7 +146,7 @@ lists_json() {
 
 # --- applying settings safely --------------------------------------------------
 
-APPLY_FILES="$SETTINGS $FORWARDERS $DATA/custom.conf $VAR/root.key"
+APPLY_FILES="$SETTINGS $FORWARDERS $DATA/custom.conf"   # plus root.key, see below
 
 backup_files() {
     rm -rf "$RUN/backup"; mkdir -p "$RUN/backup"
@@ -154,6 +154,7 @@ backup_files() {
         if [ -f "$_f" ]; then cp -p "$_f" "$RUN/backup/${_f##*/}"
         else : > "$RUN/backup/${_f##*/}.absent"; fi
     done
+    ub_read root.key > "$RUN/backup/root.key" 2>/dev/null || rm -f "$RUN/backup/root.key"
 }
 
 restore_files() {
@@ -162,6 +163,7 @@ restore_files() {
         if [ -f "$_b.absent" ]; then rm -f "$_f"
         elif [ -f "$_b" ]; then cp -p "$_b" "$_f"; fi
     done
+    if [ -s "$RUN/backup/root.key" ]; then install_root_key "$RUN/backup/root.key"; fi
 }
 
 # regenerate: rebuild generated config from the stored settings.
@@ -312,7 +314,8 @@ _do_custom_set() {
 # not the redirect is on.
 cmd_anchor_update() {
     unbound_running || die "Unbound is not running"
-    cp -f "$VAR/root.key" "$RUN/anchor.key"
+    ub_read root.key > "$RUN/anchor.key" 2>/dev/null && [ -s "$RUN/anchor.key" ] \
+        || cp -f "$MODDIR/conf/root.key" "$RUN/anchor.key"
     printf 'server:\n    do-not-query-localhost: no\nforward-zone:\n    name: "."\n    forward-addr: 127.0.0.1@%s\n' \
         "$UB_PORT" > "$RUN/anchor.conf"
     _out="$("$BIN/unbound-anchor" -v -a "$RUN/anchor.key" -C "$RUN/anchor.conf" 2>&1)"
@@ -334,9 +337,7 @@ cmd_anchor_update() {
 # _do_anchor_install FILE WHAT
 _do_anchor_install() {
     backup_files
-    cp -f "$1" "$VAR/root.key"
-    chown "$UB_UID:$UB_UID" "$VAR/root.key" 2>/dev/null
-    chmod 0644 "$VAR/root.key"
+    install_root_key "$1"
     _rebuild=0
     apply_with_rollback "$2"
 }
@@ -399,8 +400,7 @@ cmd_diag() {
     _sec "module log (last 40)"
     tail -n 40 "$MODLOG" 2>/dev/null
     _sec "unbound log (last 40)"
-    tail -n 40 "$VAR/unbound.log" 2>/dev/null
-    tail -n 5 "$VAR/unbound.stderr" 2>/dev/null
+    tail -n 40 "$UBLOG" 2>/dev/null
 }
 
 cmd_redirect() {
@@ -527,7 +527,7 @@ case "$cmd" in
             esac
         done
         if [ "$_which" = unbound ]; then
-            cat "$VAR/unbound.log.1" "$VAR/unbound.log" "$VAR/unbound.stderr" 2>/dev/null | tail -n "$_n"
+            cat "$UBLOG.1" "$UBLOG" 2>/dev/null | tail -n "$_n"
         else
             cat "$MODLOG.1" "$MODLOG" 2>/dev/null | tail -n "$_n"
         fi ;;

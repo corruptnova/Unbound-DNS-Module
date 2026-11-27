@@ -5,6 +5,23 @@ these notes.
 
 ## v1.26.2-r8
 
+Security hardening (nothing here was known to be exploited; each closes a
+way a future Unbound or curl bug could have been turned into root):
+
+- Root no longer trusts anything the Unbound user can change. Unbound's
+  folder (`var/`) now holds only `root.key`. The logs moved to the root-only
+  `/data/adb/unbound/log/`, and the control socket to `run/`. Root reads
+  `root.key` with Unbound's rights, refusing links, and installs a new one
+  by renaming it into place, never following what is there. Before, a
+  planted link could make root write, chown or move files outside the
+  folder. Old logs are carried over.
+- Blocklist downloads no longer run as root. curl runs as an unprivileged
+  user ("nobody") through a small new helper, `dropexec`, that drops
+  privileges for good.
+- The NAT64 discovery exemption only lets through a query for exactly
+  `ipv4only.arpa`. Before, any DNS packet containing those bytes skipped
+  Unbound and the blocklists.
+
 - Much lighter on battery: the supervisor no longer checks everything every
   10 seconds. It reacts at once when Unbound exits or a setting changes,
   checks for stop/disable every 30 seconds without starting any process,

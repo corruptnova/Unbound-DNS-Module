@@ -7,8 +7,9 @@ APPDATA="${UNBOUND_APPDATA:-/data/data}"
 BIN="$MODDIR/bin"
 LIB_DIR="$MODDIR/lib"
 
-VAR="$DATA/var"            # owned by the Unbound user: root.key, unbound.log, socket
-RUN="$DATA/run"            # root-only runtime state: pids, locks, flags
+VAR="$DATA/var"            # the only folder the Unbound user can write: root.key
+RUN="$DATA/run"            # root-only runtime state: pids, locks, flags, control socket
+LOGDIR="$DATA/log"         # root-only: module.log, unbound.log
 LISTS="$DATA/lists"
 CACHE="$LISTS/cache"
 LOCAL_LISTS="$LISTS/local"
@@ -20,9 +21,11 @@ CONF="$DATA/unbound.conf"
 CTRL_CONF="$DATA/control.conf"
 BLOCK_CONF="$DATA/blocklist.conf"
 BLOCK_COUNT="$DATA/blocklist.count"
-MODLOG="$VAR/module.log"
+MODLOG="$LOGDIR/module.log"
+UBLOG="$LOGDIR/unbound.log"
 
 UB_UID=3003                # "inet": network access on paranoid-network kernels
+DL_UID=9999                # "nobody": list downloads (curl) run as this user
 UB_PORT=5335
 TAB="$(printf '\t')"
 NL='
@@ -31,7 +34,7 @@ NL='
 now() { date +%s; }
 
 log() {
-    [ -d "$VAR" ] || return 0
+    [ -d "$LOGDIR" ] || return 0
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$MODLOG" 2>/dev/null
 }
 
@@ -132,6 +135,11 @@ unbound_running() { pidfile_alive "$RUN/unbound.pid" unbound; }
 daemon_running() { pidfile_alive "$RUN/daemon.pid" ctl.sh; }
 
 ubctl() { "$BIN/unbound-control" -c "$CTRL_CONF" "$@"; }
+
+# ub_read NAME: print var/NAME with the Unbound user's rights. The Unbound
+# user can replace anything in var/, so root never opens files there itself:
+# links, folders, pipes, devices and files over 1 MB are refused.
+ub_read() { "$BIN/dropexec" read "$UB_UID" "$UB_UID" "$VAR" "$1" 1048576; }
 
 # lock NAME / unlock NAME: mkdir-based, stale locks (dead owner) are broken.
 lock() {

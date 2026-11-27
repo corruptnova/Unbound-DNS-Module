@@ -16,8 +16,13 @@ CAPTIVE_PORTAL_PKGS="com.android.captiveportallogin com.google.android.captivepo
 # resolver answers. On IPv6-only networks (most US carriers) Unbound cannot
 # give that answer, so IPv4-only services (GitHub, ...) become unreachable.
 # Letting just this one name through reveals nothing about what is browsed.
-# Matched in the first (and only) packet of a UDP query, in wire format.
+# Matched in wire format, and only as the question name itself: it must
+# start right after the DNS header (IP header + 8 bytes UDP + 12 bytes DNS),
+# so no other query can carry these bytes elsewhere to skip Unbound.
 NAT64_QNAME='|08|ipv4only|04|arpa|00|'
+NAT64_QNAME_LEN=15
+NAT64_AT_V4=40          # 20-byte IPv4 header (locally sent packets carry no options)
+NAT64_AT_V6=60          # 40-byte IPv6 header
 
 # Unbound itself, Android's network-validation stack and the captive portal
 # login app (so "Sign in to network" keeps working).
@@ -44,8 +49,9 @@ _nat_chain() {
         _ipt "$_i" -w -t nat -A "$NAT_CHAIN" -m owner --uid-owner "$_u" -j RETURN || return 1
     done
     # Needs the kernel's string match; without it, keep redirecting anyway.
+    if [ "$_i" = ip6tables ]; then _at="$NAT64_AT_V6"; else _at="$NAT64_AT_V4"; fi
     if _ipt "$_i" -w -t nat -A "$NAT_CHAIN" -p udp --dport 53 -m string --algo bm --icase \
-            --hex-string "$NAT64_QNAME" -j RETURN; then
+            --from "$_at" --to "$((_at + NAT64_QNAME_LEN))" --hex-string "$NAT64_QNAME" -j RETURN; then
         echo ok > "$RUN/nat64.$_i"
     else
         echo unsupported > "$RUN/nat64.$_i"

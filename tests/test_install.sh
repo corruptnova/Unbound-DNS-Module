@@ -17,7 +17,7 @@ stage() {
     rm -rf "$MODPATH"; cp -R "$REPO_DIR/module" "$MODPATH"
     for abi in arm64-v8a armeabi-v7a x86_64; do
         mkdir -p "$MODPATH/bin/$abi"
-        for b in unbound unbound-control unbound-anchor curl; do
+        for b in unbound unbound-control unbound-anchor curl dropexec; do
             printf '#!/bin/sh\necho %s-%s\n' "$abi" "$b" > "$MODPATH/bin/$abi/$b"
             # Some managers' unzip drops the execute bit (seen with FinaSU).
             chmod 0644 "$MODPATH/bin/$abi/$b"

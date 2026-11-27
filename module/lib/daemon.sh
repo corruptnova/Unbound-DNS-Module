@@ -26,11 +26,15 @@ write_runtime_conf() {
 # Safe to run any number of times; never touches user files.
 setup_data() {
     umask 022
-    mkdir -p "$DATA" "$VAR" "$RUN" "$LISTS" "$CACHE" "$LOCAL_LISTS"
+    mkdir -p "$DATA" "$VAR" "$RUN" "$LOGDIR" "$LISTS" "$CACHE" "$LOCAL_LISTS"
+    chmod 0700 "$RUN" "$LOGDIR" "$LISTS"
+    chown "$UB_UID:$UB_UID" "$VAR" 2>/dev/null
+    chmod 0750 "$VAR"
+    migrate_var
     cp -f "$MODDIR/conf/unbound.conf" "$CONF"
     cp -f "$MODDIR/conf/control.conf" "$CTRL_CONF"
     [ -f "$DATA/custom.conf" ] || cp "$MODDIR/conf/custom.conf" "$DATA/custom.conf"
-    [ -s "$VAR/root.key" ] || cp "$MODDIR/conf/root.key" "$VAR/root.key"
+    [ -n "$(ub_read root.key 2>/dev/null)" ] || install_root_key "$MODDIR/conf/root.key"
     [ -f "$SOURCES" ] || : > "$SOURCES"
     [ -f "$ALLOW" ] || : > "$ALLOW"
     [ -f "$OWN_BLOCK" ] || : > "$OWN_BLOCK"
@@ -42,14 +46,40 @@ setup_data() {
     write_options_conf
 
     # Unbound chroots here and runs as uid/gid $UB_UID: it may read the
-    # config files and write only var/. Everything else stays root-only.
+    # config files and write only var/, which holds nothing but root.key.
+    # Everything else stays root-only, and root never follows anything the
+    # Unbound user could have put in var/ (see ub_read, install_root_key).
     chown 0:"$UB_UID" "$DATA" "$CONF" "$CTRL_CONF" "$DATA/custom.conf" \
         "$DATA/runtime.conf" "$BLOCK_CONF" 2>/dev/null
     chmod 0750 "$DATA"
     chmod 0640 "$CONF" "$CTRL_CONF" "$DATA/custom.conf" "$DATA/runtime.conf" "$BLOCK_CONF"
-    chown -R "$UB_UID:$UB_UID" "$VAR" 2>/dev/null
-    chmod 0750 "$VAR"
-    chmod 0700 "$RUN" "$LISTS"
+}
+
+# install_root_key SRC: make SRC (a root-only file) the trust anchor that
+# Unbound keeps up to date. Prepared in run/ and renamed over var/root.key,
+# so a link or folder left there is replaced, never followed.
+install_root_key() {
+    _new="$RUN/root.key.new"
+    rm -f "$_new"
+    cp "$1" "$_new" || return 1
+    chown "$UB_UID:$UB_UID" "$_new" 2>/dev/null
+    chmod 0644 "$_new"
+    if ! mv -f -T "$_new" "$VAR/root.key" 2>/dev/null; then
+        rm -rf "$VAR/root.key"
+        mv -f "$_new" "$VAR/root.key"
+    fi
+}
+
+# migrate_var: earlier versions kept logs and the control socket in var/.
+# Old logs are read with the Unbound user's rights, then the names removed
+# (rm never follows a link).
+migrate_var() {
+    for _o in module unbound; do
+        [ -e "$LOGDIR/$_o.log" ] && continue
+        { ub_read "$_o.log.1"; ub_read "$_o.log"; } > "$LOGDIR/$_o.log" 2>/dev/null
+    done
+    rm -f "$VAR/module.log" "$VAR/module.log.1" "$VAR/unbound.log" "$VAR/unbound.log.1" \
+        "$VAR/unbound.stderr" "$VAR/unbound.sock"
 }
 
 # --- Private DNS (DNS-over-TLS in Android settings) bypasses port 53 --------
@@ -87,18 +117,21 @@ private_dns_restore() {
 # start_unbound: launch in the foreground mode under us and wait until it
 # answers on the control socket. Blocklist loading can take a while.
 start_unbound() {
-    : > "$VAR/unbound.stderr"
-    "$BIN/unbound" -d -c "$CONF" >> "$VAR/unbound.stderr" 2>&1 &
+    # Unbound logs to stderr (see unbound.conf). Only what this start wrote
+    # is looked at when it fails.
+    : >> "$UBLOG"
+    _mark=$(( $(wc -c < "$UBLOG") + 1 ))
+    "$BIN/unbound" -d -c "$CONF" >> "$UBLOG" 2>&1 &
     _ub=$!
     echo "$_ub" > "$RUN/unbound.pid"
     _t=0
     while [ "$_t" -lt "${UNBOUND_START_TIMEOUT:-90}" ]; do
         if ! alive "$_ub"; then
             wait "$_ub" 2>/dev/null
-            log "unbound: failed to start: $(tail -n 3 "$VAR/unbound.stderr" | tr '\n' ' ')"
-            # Kept until a start succeeds: unbound.stderr is emptied at every
-            # retry, so status and rollback messages read this instead.
-            grep -v '^[[:space:]]*$' "$VAR/unbound.stderr" | tail -n 2 | tr '\n' ' ' > "$RUN/start_error"
+            _out="$(tail -c +"$_mark" "$UBLOG" | grep -v '^[[:space:]]*$')"
+            log "unbound: failed to start: $(printf '%s\n' "$_out" | tail -n 3 | tr '\n' ' ')"
+            # Kept until a start succeeds, for status and rollback messages.
+            printf '%s\n' "$_out" | tail -n 2 | tr '\n' ' ' > "$RUN/start_error"
             rm -f "$RUN/unbound.pid"
             return 1
         fi
@@ -185,13 +218,15 @@ refresh_due() {
     [ $(( $(now) - $(setting_get LAST_UPDATE 0) )) -ge "$_interval" ]
 }
 
+# rotate_logs: both live in the root-only log/ folder. Unbound keeps
+# unbound.log open as its stderr, so that one is copied and emptied.
 rotate_logs() {
-    for _f in "$VAR/unbound.log" "$MODLOG"; do
-        [ -f "$_f" ] || continue
-        [ "$(wc -c < "$_f")" -gt 524288 ] || continue
-        mv -f "$_f" "$_f.1"
-        [ "$_f" = "$VAR/unbound.log" ] && unbound_running && ubctl log_reopen >/dev/null 2>&1
-    done
+    if [ -f "$MODLOG" ] && [ "$(wc -c < "$MODLOG")" -gt 524288 ]; then
+        mv -f "$MODLOG" "$MODLOG.1"
+    fi
+    if [ -f "$UBLOG" ] && [ "$(wc -c < "$UBLOG")" -gt 524288 ]; then
+        cp -f "$UBLOG" "$UBLOG.1" && : > "$UBLOG"
+    fi
 }
 
 module_off() { [ -f "$MODDIR/disable" ] || [ -f "$MODDIR/remove" ]; }

@@ -56,7 +56,7 @@ redirect_inactive() { ! redirect_active; }
 dump_logs() {
     say "logs"
     ctl status || true
-    sh_dev "cat /data/adb/unbound/var/module.log; echo ---; tail -n 60 /data/adb/unbound/var/unbound.log; echo ---; cat /data/adb/unbound/var/unbound.stderr" || true
+    sh_dev "cat /data/adb/unbound/log/module.log; echo ---; tail -n 60 /data/adb/unbound/log/unbound.log; echo ---; ls -la /data/adb/unbound/var" || true
     sh_dev "iptables -w -t nat -S; ip6tables -w -t nat -S" || true
 }
 
@@ -102,6 +102,13 @@ uid="$(sh_dev "grep ^Uid: /proc/$pid/status" | awk '{print $2}')"
 [ "$uid" = 3003 ] && ok "unbound runs as uid 3003" || bad "unbound uid is $uid"
 root="$(sh_dev "readlink /proc/$pid/root")"
 [ "$root" = /data/adb/unbound ] && ok "unbound is chrooted" || bad "unbound root is $root"
+# The Unbound user can write only var/, and nothing there but root.key.
+v="$(sh_dev "ls -A /data/adb/unbound/var" | grep -v '^root\.key\.')"
+[ "$v" = root.key ] && ok "var/ holds only root.key" || bad "var/ holds: $v"
+sh_dev "[ -S /data/adb/unbound/run/unbound.sock ] && echo yes" | grep -q yes \
+    && ok "control socket in the root-only run/ folder" || bad "no control socket in run/"
+sh_dev "grep -q 'start of service' /data/adb/unbound/log/unbound.log && echo yes" | grep -q yes \
+    && ok "Unbound's log saved in log/" || bad "Unbound's log missing from log/"
 
 say "resolution goes through Unbound"
 q0="$(ctl status | sed -n 's/.*"queries":\([0-9]*\).*/\1/p')"
@@ -120,6 +127,11 @@ if ctl status | grep -q '"nat64_bypass_v4":"ok"'; then
     c1="$(nat64_count)"
     [ "${c1:-0}" -gt "${c0:-0}" ] && ok "ipv4only.arpa lookups bypass Unbound ($c0 -> $c1 packets)" \
         || bad "ipv4only.arpa lookups did not hit the bypass ($c0 -> $c1)"
+    # The same bytes anywhere else in a query must not skip Unbound.
+    sh_dev "ping -c 1 -W 2 x.ipv4only.arpa >/dev/null 2>&1; true"
+    c2="$(nat64_count)"
+    [ "${c2:-0}" = "${c1:-0}" ] && ok "a longer name ending in ipv4only.arpa goes to Unbound" \
+        || bad "x.ipv4only.arpa hit the bypass ($c1 -> $c2)"
 else
     bad "bypass rule not installed: $(ctl status | grep -o '"nat64_bypass_v4":"[a-z]*"')"
 fi
@@ -222,13 +234,13 @@ sh_dev "iptables-save -t nat" | grep -qx -- "-A OUTPUT -j UNBOUND_DNS" \
 sh_dev "iptables -w -t nat -D OUTPUT -j UNBOUND_DNS"
 redirect_inactive && ok "redirect jump deleted" || bad "could not delete the jump"
 wait_until 40 "redirect put back within a poll" redirect_active
-case "$(sh_dev "cat /data/adb/unbound/var/module.log")" in
+case "$(sh_dev "cat /data/adb/unbound/log/module.log")" in
     *"put back our rules that were removed: iptables/UNBOUND_DNS"*) ok "restore logged" ;;
     *) bad "restore not logged" ;;
 esac
 
 say "disable in manager"
-case "$(sh_dev "cat /data/adb/unbound/var/module.log")" in
+case "$(sh_dev "cat /data/adb/unbound/log/module.log")" in
     *"inotifyd not available"*) bad "inotifyd watcher did not start" ;;
     *) ok "inotifyd watcher running" ;;
 esac

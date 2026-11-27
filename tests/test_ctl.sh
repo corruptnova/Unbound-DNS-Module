@@ -79,6 +79,9 @@ assert_fails "duplicate list rejected" ctl list-add "https://lists.example/hosts
 assert_contains "default name from host" "lists.example" "$(cat "$D/lists/sources.list")"
 
 assert_ok "update-lists" ctl update-lists
+assert_contains "curl runs unprivileged (nobody, inet group)" \
+    "dropexec run 9999 9999 3003 $MOD/bin/curl -q " "$(grep "^dropexec run" "$STUB_STATE/calls.log")"
+assert_contains "curl gets the CA bundle on fd 3" "--cacert /proc/self/fd/3" "$(grep "^dropexec run" "$STUB_STATE/calls.log")"
 conf="$(cat "$D/blocklist.conf")"
 assert_contains "blocks hosts entry" 'local-zone: "ads.example.com." always_nxdomain' "$conf"
 assert_contains "blocks abp entry" 'local-zone: "example.org." always_nxdomain' "$conf"
@@ -153,8 +156,10 @@ assert_contains "tcp redirect" "-p tcp --dport 53 -j REDIRECT --to-ports 5335" "
 assert_contains "ipv6 redirect" "-p udp --dport 53 -j REDIRECT --to-ports 5335" "$(nat ip6tables UNBOUND_DNS)"
 assert_contains "dot rejected" "-p tcp --dport 853 -j REJECT --reject-with tcp-reset" "$(cat "$STUB_STATE/iptables/filter/UNBOUND_DOT")"
 # NAT64 discovery (ipv4only.arpa) goes to the network's DNS64, ahead of the redirect.
-nat64_rule='-p udp --dport 53 -m string --algo bm --icase --hex-string |08|ipv4only|04|arpa|00| -j RETURN'
+# Only as the question name: right after the DNS header.
 for fam in iptables ip6tables; do
+    if [ "$fam" = iptables ]; then at=40; else at=60; fi
+    nat64_rule="-p udp --dport 53 -m string --algo bm --icase --from $at --to $((at + 15)) --hex-string |08|ipv4only|04|arpa|00| -j RETURN"
     r="$(nat $fam UNBOUND_DNS)"
     assert_contains "$fam: NAT64 discovery bypass" "$nat64_rule" "$r"
     first_redirect="$(echo "$r" | grep -n REDIRECT | head -n 1 | cut -d: -f1)"
@@ -195,8 +200,8 @@ assert_contains "status version" '"version":"1.26.2"' "$json"
 assert_contains "status nat64 bypass" '"nat64_bypass_v6":"ok"' "$json"
 
 # Unbound dies -> redirect removed, Unbound restarted, redirect back.
-log_mark="$(wc -l < "$D/var/module.log")"
-new_log_has() { tail -n +"$((log_mark + 1))" "$D/var/module.log" | grep -q "$1"; }
+log_mark="$(wc -l < "$D/log/module.log")"
+new_log_has() { tail -n +"$((log_mark + 1))" "$D/log/module.log" | grep -q "$1"; }
 kill "$(cat "$STUB_STATE/unbound.pid")"
 wait_for 10 new_log_has "redirect: removed because Unbound is not running" \
     && pass || fail "redirect removed when unbound died"
@@ -215,7 +220,7 @@ jump_absent && pass || fail "rules gone after stop"
 echo BROKEN >> "$D/custom.conf"
 : > "$STUB_STATE/calls.log"
 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
-wait_for 10 grep -q "unbound: failed to start" "$D/var/module.log" && pass || fail "start failure logged"
+wait_for 10 grep -q "unbound: failed to start" "$D/log/module.log" && pass || fail "start failure logged"
 sleep 2
 jump_absent && pass || fail "no redirect while unbound cannot start"
 assert_contains "status shows error" "syntax error" "$(ctl status)"
@@ -362,6 +367,58 @@ cp "$MOD/conf/root.key" "$D/var/root.key"
 ctl stop >/dev/null
 ctl settings-reset >/dev/null
 
+# --- root never follows what the Unbound user leaves in var/ ----------------------
+# A compromised Unbound owns var/ and could plant links there. Nothing root
+# does may write, chown or read through them.
+victim="$TMP/victim"; mkdir -p "$victim/dir"
+echo precious > "$victim/file"; chmod 0600 "$victim/file"
+victim_intact() {
+    [ "$(cat "$victim/file")" = precious ] && [ "$(stat -c '%u:%g %a' "$victim/file")" = "0:0 600" ] \
+        && [ -z "$(ls -A "$victim/dir")" ]
+}
+plant() {
+    rm -rf "$D/var/root.key"
+    ln -s "$victim/file" "$D/var/root.key"
+    for n in module.log unbound.log unbound.stderr; do rm -f "$D/var/$n"; ln -s "$victim/file" "$D/var/$n"; done
+    rm -f "$D/var/unbound.log.1" "$D/var/module.log.1"
+    ln -s "$victim/dir" "$D/var/unbound.log.1"; ln -s "$victim/dir" "$D/var/module.log.1"
+}
+plain_root_key() { [ -f "$D/var/root.key" ] && [ ! -L "$D/var/root.key" ]; }
+plant
+ctl setup
+victim_intact && pass || fail "setup left the planted links alone"
+plain_root_key && pass || fail "setup replaced the planted root.key"
+assert_eq "built-in anchor after a planted link" "$(cat "$MOD/conf/root.key")" "$(cat "$D/var/root.key")"
+[ ! -e "$D/var/module.log" ] && [ ! -L "$D/var/unbound.stderr" ] && pass || fail "old log names removed from var/"
+assert_eq "root.key owned by the Unbound user" "3003:3003" "$(stat -c '%u:%g' "$D/var/root.key")"
+plant
+assert_contains "anchor reset with a planted link" '"ok":true' "$(ctl anchor-reset)"
+victim_intact && pass || fail "anchor reset did not follow the link"
+plain_root_key && pass || fail "anchor reset replaced the link"
+plant
+ctl anchor-update >/dev/null
+victim_intact && pass || fail "anchor update did not read or write through the link"
+plant
+ctl settings-apply CACHE_SIZE=small >/dev/null
+victim_intact && pass || fail "settings apply (backup) did not follow the link"
+echo BROKEN >> "$D/custom.conf"
+plant
+ctl settings-apply CACHE_SIZE=large >/dev/null
+sed -i '/^BROKEN$/d' "$D/custom.conf"
+victim_intact && pass || fail "rollback did not follow the link"
+# A folder or a pipe in place of root.key is replaced too, and never blocks.
+rm -rf "$D/var/root.key"; mkdir "$D/var/root.key"; ln -s "$victim/file" "$D/var/root.key/x"
+ctl setup
+plain_root_key && pass || fail "folder in place of root.key replaced"
+victim_intact && pass || fail "folder contents not followed"
+rm -f "$D/var/root.key"; mkfifo "$D/var/root.key"
+json="$(timeout 10 sh "$MOD/ctl.sh" settings)"
+assert_contains "settings readable with a pipe as root.key" '"keys":[]' "$json"
+ctl setup
+plain_root_key && pass || fail "pipe in place of root.key replaced"
+ctl stop >/dev/null
+ctl settings-reset >/dev/null
+
 # --- module disabled in the manager -> daemon stops and restores ------------------
 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
 wait_for 10 jump_present
@@ -396,7 +453,7 @@ calls_since "$_m" | grep -Eq '^ip6?tables ' && fail "polls ran iptables (takes t
 _m=$(ncalls)
 iptables -w -t nat -D OUTPUT -j UNBOUND_DNS
 wait_for 4 jump_present && pass || fail "nat jump restored at the next poll"
-assert_contains "restore logged" "redirect: put back our rules that were removed: iptables/UNBOUND_DNS" "$(cat "$D/var/module.log")"
+assert_contains "restore logged" "redirect: put back our rules that were removed: iptables/UNBOUND_DNS" "$(cat "$D/log/module.log")"
 calls_since "$_m" | grep -Eq -- '-F UNBOUND_DOT|^ip6tables .*-F ' && fail "restore rebuilt rules that were still there" || pass
 assert_eq "other app's nat chain untouched" "-p udp --dport 53 -j RETURN" "$(cat "$STUB_STATE/iptables/nat/FW_APP")"
 assert_eq "other app's filter chain untouched" "-m owner --uid-owner 10099 -j DROP" "$(cat "$STUB_STATE/iptables/filter/fw_app")"
@@ -457,7 +514,7 @@ wait_for 10 jump_present
 sleep 1
 touch "$MOD/disable"
 wait_for 14 daemon_gone && pass || fail "disable noticed within the fallback interval"
-assert_contains "fallback logged" "checking for disable every 10 s" "$(cat "$D/var/module.log")"
+assert_contains "fallback logged" "checking for disable every 10 s" "$(cat "$D/log/module.log")"
 rm -f "$MOD/disable" "$STUB_STATE/no-inotifyd"
 
 done_testing

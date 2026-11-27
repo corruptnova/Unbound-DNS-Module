@@ -75,15 +75,21 @@ ca_bundle() {
 
 # download_source ID URL: fetch + parse into the cache. Keeps the previous
 # copy on any failure.
+#
+# curl (TLS, HTTP, whatever server the URL or its redirects lead to) runs as
+# the unprivileged DL_UID, with only the "inet" group for network access.
+# It cannot open anything under /data/adb itself: root hands it the CA
+# bundle on fd 3 and takes the download from its stdout into run/.
 download_source() {
     _id="$1"; _url="$2"; _tmp="$RUN/dl.$_id"
     _ca="$(ca_bundle)" || { meta_write "$_id" "updated=$(meta_get "$_id" updated)" \
         "status=error" "message=no CA certificates found" "count=$(meta_get "$_id" count)"; return 1; }
-    if _err="$("$BIN/curl" --fail --silent --show-error --location \
-            --proto '=https' --proto-redir '=https' --cacert "$_ca" \
+    if _err="$("$BIN/dropexec" run "$DL_UID" "$DL_UID" "$UB_UID" \
+            "$BIN/curl" -q --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' --cacert /proc/self/fd/3 \
             --connect-timeout 20 --max-time 300 --retry 2 --retry-delay 3 \
             --max-filesize 104857600 --user-agent "unbound-dns-module" \
-            -o "$_tmp" "$_url" 2>&1)" && lists_parse "$_tmp" "$CACHE/$_id.parsed.new"; then
+            "$_url" 3< "$_ca" 2>&1 > "$_tmp")" && lists_parse "$_tmp" "$CACHE/$_id.parsed.new"; then
         _count="$(grep -c '^B ' "$CACHE/$_id.parsed.new")"
         mv -f "$CACHE/$_id.parsed.new" "$CACHE/$_id.parsed"
         meta_write "$_id" "updated=$(now)" "status=ok" "message=" "count=$_count"

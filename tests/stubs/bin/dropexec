@@ -1,0 +1,15 @@
+#!/bin/sh
+# Test stand-in for dropexec (src/dropexec.c, tested on its own in
+# test_dropexec.sh): records the call, then runs or reads without changing
+# user, since tests do not always run as root.
+echo "dropexec $*" >> "$STUB_STATE/calls.log"
+mode="$1"; shift
+case "$mode" in
+    run) shift 3; exec "$@" ;;
+    read)
+        f="$3/$4"
+        if [ ! -f "$f" ] || [ -L "$f" ]; then echo "dropexec: $4: refused" >&2; exit 125; fi
+        if [ "$(wc -c < "$f")" -gt "$5" ]; then echo "dropexec: file too large" >&2; exit 125; fi
+        cat "$f" ;;
+    *) exit 126 ;;
+esac

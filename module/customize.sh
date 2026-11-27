@@ -14,7 +14,7 @@ case "$ARCH" in
 esac
 # Only test that the files exist: whether unzip kept the execute bit depends
 # on the manager, and permissions are set just below anyway.
-for b in unbound unbound-control unbound-anchor curl; do
+for b in unbound unbound-control unbound-anchor curl dropexec; do
     [ -f "$MODPATH/bin/$ABI/$b" ] || abort "! This zip has no $b binary for $ABI"
 done
 

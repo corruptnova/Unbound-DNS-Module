@@ -151,12 +151,12 @@ write_options_conf() {
 
 # anchor_json: what root.key says about the DNSSEC root keys.
 anchor_json() {
-    _rk="$VAR/root.key"
+    _rk="$(ub_read root.key 2>/dev/null)"
     printf '{"keys":['
     # Matches both the shipped file (". IN DNSKEY 257 ...", spaces) and the
     # file Unbound rewrites while tracking keys (tab-separated fields plus
     # ";;state=" comments).
-    [ -f "$_rk" ] && LC_ALL=C awk '
+    printf '%s\n' "$_rk" | LC_ALL=C awk '
         /^;/ { next }
         /DNSKEY[ \t]+257[ \t]/ || /[ \t]DS[ \t]/ {
             id = ""; state = ""
@@ -165,9 +165,9 @@ anchor_json() {
             if (match($0, /\[ *[A-Z]+ *\]/)) { state = substr($0, RSTART + 1, RLENGTH - 2); gsub(/ /, "", state) }
             if (id == "") next
             printf "%s{\"id\":%s,\"state\":\"%s\"}", (n++ ? "," : ""), id, state
-        }' "$_rk"
-    _ls="$(sed -n 's/^;;last_success: \([0-9]*\).*/\1/p' "$_rk" 2>/dev/null | head -n 1)"
-    _mt="$(stat -c %Y "$_rk" 2>/dev/null)"
+        }'
+    _ls="$(printf '%s\n' "$_rk" | sed -n 's/^;;last_success: \([0-9]*\).*/\1/p' | head -n 1)"
+    _mt="$(stat -c %Y "$VAR/root.key" 2>/dev/null)"
     printf '],"last_success":%s,"modified":%s}' "$(json_num "$_ls")" "$(json_num "$_mt")"
 }
 

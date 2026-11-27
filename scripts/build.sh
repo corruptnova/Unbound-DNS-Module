@@ -193,6 +193,13 @@ build_curl() {
     )
 }
 
+# dropexec: the module's small privilege-drop helper (src/dropexec.c).
+build_dropexec() {
+    log "[$ABI] building dropexec"
+    # shellcheck disable=SC2086  # flag lists
+    "$CC" $CFLAGS -Wall -Wextra -Werror $LDFLAGS -o "$OUT/dropexec" "$ROOT_DIR/src/dropexec.c"
+}
+
 build_abi() {
     ABI="$1"
     BUILD="$ROOT_DIR/build/$ABI"
@@ -204,7 +211,8 @@ build_abi() {
     build_expat
     build_unbound
     build_curl
-    "$STRIP" --strip-unneeded "$OUT/unbound" "$OUT/unbound-control" "$OUT/unbound-anchor" "$OUT/curl"
+    build_dropexec
+    "$STRIP" --strip-unneeded "$OUT/unbound" "$OUT/unbound-control" "$OUT/unbound-anchor" "$OUT/curl" "$OUT/dropexec"
     mkdir -p "$OUT/licenses"
     cp "$BUILD/src/unbound/LICENSE" "$OUT/licenses/unbound.txt"
     cp "$BUILD/src/openssl/LICENSE.txt" "$OUT/licenses/openssl.txt"
@@ -219,7 +227,7 @@ build_abi() {
         echo "ndk=$NDK_VERSION api=$ANDROID_API"
         echo "unbound=$UNBOUND_VERSION openssl=$OPENSSL_VERSION expat=$EXPAT_VERSION curl=$CURL_VERSION"
     } > "$OUT/BUILDINFO"
-    log "[$ABI] done: $(cd "$OUT" && du -ch unbound unbound-control unbound-anchor curl | tail -1)"
+    log "[$ABI] done: $(cd "$OUT" && du -ch unbound unbound-control unbound-anchor curl dropexec | tail -1)"
 }
 
 [ $# -eq 1 ] || die "usage: $0 <arm64-v8a|armeabi-v7a|x86_64|all>"
