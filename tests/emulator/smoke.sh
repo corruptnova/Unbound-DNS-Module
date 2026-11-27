@@ -109,6 +109,11 @@ sh_dev "[ -S /data/adb/unbound/run/unbound.sock ] && echo yes" | grep -q yes \
     && ok "control socket in the root-only run/ folder" || bad "no control socket in run/"
 sh_dev "grep -q 'start of service' /data/adb/unbound/log/unbound.log && echo yes" | grep -q yes \
     && ok "Unbound's log saved in log/" || bad "Unbound's log missing from log/"
+# No root manager loads the module's SELinux policy here, so Unbound must run
+# exactly as before, and say so.
+ctl status | grep -q '"selinux":"unconfined"' && ok "without the module policy Unbound runs as before" \
+    || bad "selinux state: $(ctl status | grep -o '"selinux":"[a-z]*"')"
+ctl selinux-report | grep -q '^state: unconfined' && ok "selinux-report works" || bad "selinux-report"
 
 say "resolution goes through Unbound"
 q0="$(ctl status | sed -n 's/.*"queries":\([0-9]*\).*/\1/p')"

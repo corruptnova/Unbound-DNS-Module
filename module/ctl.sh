@@ -50,6 +50,7 @@ usage: ctl.sh <command> [args]
                              refresh the DNSSEC root trust anchor / restore
                              the built-in one
   log [module|unbound] [N]   last N log lines (default 200)
+  selinux-report             Unbound's SELinux domain and accesses logged for it
   diag                       troubleshooting report (paste it into a bug report)
   stats-reset                start the query statistics from zero
 
@@ -96,6 +97,8 @@ status_json() {
     printf '"nat64_bypass_v4":"%s","nat64_bypass_v6":"%s",' \
         "$(json_esc "$(cat "$RUN/nat64.iptables" 2>/dev/null)")" \
         "$(json_esc "$(cat "$RUN/nat64.ip6tables" 2>/dev/null)")"
+    _se=""; [ "$_run" = 1 ] && _se="$(cat "$RUN/selinux" 2>/dev/null)"
+    printf '"selinux":"%s",' "$(json_esc "$_se")"
     printf '"private_dns":"%s","version":"%s","module_version":"%s",' \
         "$(json_esc "$_pd")" "$(json_esc "$(unbound_version)")" "$(json_esc "$(module_version)")"
     # Saved totals plus what Unbound counted since the last snapshot.
@@ -399,8 +402,29 @@ cmd_diag() {
     fi
     _sec "module log (last 40)"
     tail -n 40 "$MODLOG" 2>/dev/null
+    _sec "SELinux"
+    cmd_selinux_report
     _sec "unbound log (last 40)"
     tail -n 40 "$UBLOG" 2>/dev/null
+}
+
+# selinux-report: Unbound's SELinux domain and every kind of access logged
+# for it so far (the learning stage's harvest, for writing enforcing rules).
+cmd_selinux_report() {
+    se_harvest
+    _ctx="not running"
+    if unbound_running; then
+        _ctx="$(tr -d '\000' < "/proc/$(unbound_pid)/attr/current" 2>/dev/null)"
+        [ -n "$_ctx" ] || _ctx="unknown"
+    fi
+    _st="$(cat "$RUN/selinux" 2>/dev/null)"
+    echo "state: ${_st:-unknown}; Unbound's context: $_ctx"
+    if [ -s "$RUN/selinux.fallback" ]; then
+        echo "fell back because: $(cat "$RUN/selinux.fallback")"
+    fi
+    _n=0; [ -f "$SE_DENIALS" ] && _n="$(grep -c 'avc:' "$SE_DENIALS")"
+    echo "kinds of access logged for unbound_dns: $_n"
+    cat "$SE_DENIALS" 2>/dev/null
 }
 
 cmd_redirect() {
@@ -537,6 +561,7 @@ case "$cmd" in
         cmd_stop >/dev/null
         private_dns_restore ;;
     diag) cmd_diag ;;
+    selinux-report) cmd_selinux_report ;;
     stats-reset) stats_reset && printf '{"ok":true}\n' ;;
     settings) settings_json ;;
     settings-apply) cmd_settings_apply "$@" ;;

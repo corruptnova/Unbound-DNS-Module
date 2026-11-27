@@ -67,6 +67,10 @@ function renderStatus(s) {
       ['IPv6 DNS', !s.redirect_active ? '—'
         : ({ ok: 'Redirected', unsupported: 'Not redirected' }[s.ipv6] || '—')],
       ['Unbound', s.version || '—'],
+      ['SELinux', {
+        learning: 'Own domain (learning)', enforcing: 'Own domain',
+        fallback: 'Manager\'s (fell back)', unconfined: 'Manager\'s',
+      }[s.selinux] || '—'],
     ].map(([k, v]) => el('div', {}, el('dt', {}, k), el('dd', {}, v))),
   );
 

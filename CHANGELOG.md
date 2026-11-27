@@ -10,6 +10,16 @@ these notes.
   M3 switches, radio rows, outlined fields, segmented log tabs, snackbars
   and a bottom bar for unsaved settings. Everything is still local; nothing
   is loaded from the internet.
+- SELinux, learning stage: Unbound runs in its own SELinux domain
+  (`unbound_dns`, from the module's `sepolicy.rule`) instead of the root
+  manager's. For now the domain is permissive: nothing is blocked, and each
+  kind of access Unbound makes is logged once and kept in
+  `/data/adb/unbound/log/selinux-denials.txt` (`ctl.sh selinux-report`, also
+  in the WebUI's diagnostics), so the rules for an enforcing domain can be
+  written from real use. If Unbound cannot start in its domain, it starts the
+  old way and the reason is shown. Without the policy (another root manager,
+  or before the reboot after installing) nothing changes. The WebUI shows
+  the domain in the statistics.
 - Fix: the Action button could report "redirect: on" right after turning
   it off, while the rules were already being removed.
 

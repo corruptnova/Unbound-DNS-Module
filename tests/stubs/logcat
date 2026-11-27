@@ -1,0 +1,4 @@
+#!/bin/sh
+# Fake logcat: prints $STUB_STATE/logcat.txt, whatever the options.
+cat "$STUB_STATE/logcat.txt" 2>/dev/null
+exit 0

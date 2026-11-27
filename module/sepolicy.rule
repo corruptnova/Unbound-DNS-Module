@@ -1,0 +1,29 @@
+# Unbound's own SELinux domain, learning stage.
+#
+# The root manager loads this at boot. Unbound enters unbound_dns through its
+# binary, which the module labels unbound_dns_exec before every start (see
+# lib/daemon.sh). For now the domain is permissive: nothing is blocked, and
+# each kind of access it makes is logged once ("ctl.sh selinux-report"), so
+# the rules of an enforcing domain can be written from real use.
+#
+# Statements naming a type this device does not have are skipped.
+
+type unbound_dns domain
+type unbound_dns_exec { file_type exec_type }
+permissive unbound_dns
+allow unbound_dns_exec labeledfs filesystem associate
+
+# The root managers' own domains: label the binary, start Unbound in its
+# domain, then watch, signal and talk to it (unbound-control).
+allow ksu unbound_dns_exec file { getattr open read execute map relabelfrom relabelto }
+allow ksu unbound_dns process { transition siginh rlimitinh noatsecure signal sigkill signull getattr }
+allow ksu unbound_dns { dir file lnk_file } { getattr open read search }
+allow ksu unbound_dns unix_stream_socket connectto
+allow magisk unbound_dns_exec file { getattr open read execute map relabelfrom relabelto }
+allow magisk unbound_dns process { transition siginh rlimitinh noatsecure signal sigkill signull getattr }
+allow magisk unbound_dns { dir file lnk_file } { getattr open read search }
+allow magisk unbound_dns unix_stream_socket connectto
+allow su unbound_dns_exec file { getattr open read execute map relabelfrom relabelto }
+allow su unbound_dns process { transition siginh rlimitinh noatsecure signal sigkill signull getattr }
+allow su unbound_dns { dir file lnk_file } { getattr open read search }
+allow su unbound_dns unix_stream_socket connectto

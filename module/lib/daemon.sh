@@ -116,12 +116,81 @@ private_dns_restore() {
 
 # start_unbound: launch in the foreground mode under us and wait until it
 # answers on the control socket. Blocklist loading can take a while.
+# --- SELinux: Unbound in its own domain ------------------------------------------
+#
+# sepolicy.rule (loaded by the root manager at boot) defines unbound_dns. This
+# build keeps it permissive, the learning stage: nothing is blocked, and each
+# kind of access is logged once, so the rules of an enforcing domain can be
+# written from real use. Without the policy (another root manager, or before
+# the reboot after installing) Unbound runs as before, in the manager's domain.
+SE_DOMAIN=unbound_dns
+SE_MODE=learning
+SE_DENIALS="$LOGDIR/selinux-denials.txt"
+
+# se_prepare: label the Unbound binary so it can enter its domain. Fails when
+# the policy has no such type (not loaded) or there is no runcon.
+se_prepare() {
+    [ -z "${UNBOUND_NO_SELINUX:-}" ] || return 1
+    command -v runcon >/dev/null 2>&1 || return 1
+    chcon "u:object_r:${SE_DOMAIN}_exec:s0" "$BIN/unbound" 2>/dev/null
+}
+
+# se_harvest: keep each kind of access logged for Unbound's domain, without
+# pids, inode numbers or addresses. Permissive denials are logged once per
+# kind and the kernel and logcat buffers roll over, so they are collected
+# while they last.
+se_harvest() {
+    : >> "$SE_DENIALS"
+    { dmesg 2>/dev/null; logcat -d -b all 2>/dev/null; } \
+        | grep -F "scontext=u:r:$SE_DOMAIN:" \
+        | LC_ALL=C awk -v known="$SE_DENIALS" '
+            function key(s,    p, a, b, c) {
+                p = s; sub(/^.*denied +\{ */, "", p); sub(/ *\}.*/, "", p)
+                a = s; sub(/^.*scontext=/, "", a); sub(/ .*/, "", a)
+                b = s; sub(/^.*tcontext=/, "", b); sub(/ .*/, "", b)
+                c = s; sub(/^.*tclass=/, "", c); sub(/ .*/, "", c)
+                return p "|" a "|" b "|" c
+            }
+            BEGIN { while ((getline l < known) > 0) seen[key(l)] = 1 }
+            /avc: +denied/ {
+                s = $0
+                sub(/^.*avc: +/, "avc: ", s)
+                gsub(/ (pid|ino|dev|ioctlcmd|faddr|fport|daddr|dest|saddr|rport|laddr)=[^ ]*/, "", s)
+                gsub(/  +/, " ", s)
+                k = key(s)
+                if (!(k in seen)) { seen[k] = 1; print s }
+            }' >> "$SE_DENIALS"
+}
+
+# start_unbound: in its own SELinux domain when the policy is there. If it
+# cannot start that way but starts the old way, the domain is the problem:
+# keep it out of the domain until the supervisor restarts, and say why.
 start_unbound() {
+    : >> "$UBLOG"
+    if [ ! -f "$RUN/selinux.fallback" ] && se_prepare; then
+        if _launch confined; then echo "$SE_MODE" > "$RUN/selinux"; return 0; fi
+        _se_err="$(cat "$RUN/start_error" 2>/dev/null)"
+        _launch || return 1
+        printf '%s\n' "${_se_err:-unknown}" > "$RUN/selinux.fallback"
+        echo fallback > "$RUN/selinux"
+        log "selinux: Unbound could not start in its own domain (${_se_err:-unknown}); running it in the root manager's domain until the supervisor restarts"
+        return 0
+    fi
+    _launch || return 1
+    if [ -f "$RUN/selinux.fallback" ]; then echo fallback; else echo unconfined; fi > "$RUN/selinux"
+}
+
+# _launch [confined]: start Unbound in the foreground under us and wait until
+# it answers on the control socket. Blocklist loading can take a while.
+_launch() {
     # Unbound logs to stderr (see unbound.conf). Only what this start wrote
     # is looked at when it fails.
-    : >> "$UBLOG"
     _mark=$(( $(wc -c < "$UBLOG") + 1 ))
-    "$BIN/unbound" -d -c "$CONF" >> "$UBLOG" 2>&1 &
+    if [ "${1:-}" = confined ]; then
+        runcon "u:r:$SE_DOMAIN:s0" "$BIN/unbound" -d -c "$CONF" >> "$UBLOG" 2>&1 &
+    else
+        "$BIN/unbound" -d -c "$CONF" >> "$UBLOG" 2>&1 &
+    fi
     _ub=$!
     echo "$_ub" > "$RUN/unbound.pid"
     _t=0
@@ -278,7 +347,7 @@ daemon_main() {
     setup_data
     if daemon_running; then echo "daemon already running" >&2; return 0; fi
     echo $$ > "$RUN/daemon.pid"
-    rm -f "$RUN/stop"
+    rm -f "$RUN/stop" "$RUN/selinux.fallback"
     _stop=0
     trap '_stop=1' TERM INT
     trap ':' USR1                       # "something changed": look now
@@ -350,6 +419,8 @@ daemon_main() {
         if [ "$_maint" = 1 ]; then
             rotate_logs
             stats_bank
+            _sem=""; read -r _sem < "$RUN/selinux" 2>/dev/null
+            [ "$_sem" = learning ] && se_harvest
         fi
 
         # Checked just before sleeping: a child that exited during this pass

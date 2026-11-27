@@ -1,0 +1,10 @@
+#!/bin/sh
+# Fake runcon CONTEXT PROG ARGS: records the context and runs PROG in this
+# process; $STUB_STATE/runcon.fail makes the domain change fail.
+echo "runcon $*" >> "$STUB_STATE/calls.log"
+if [ -f "$STUB_STATE/runcon.fail" ]; then
+    echo "runcon: $1: Permission denied" >&2
+    exit 1
+fi
+shift
+exec "$@"
