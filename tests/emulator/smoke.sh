@@ -215,8 +215,12 @@ redirect_inactive && ok "rules removed" || bad "rules still there"
 sh_dev "ASH_STANDALONE=1 /data/adb/ksu/bin/busybox sh $MOD/action.sh" | grep -q "redirect: on" && ok "action turns redirect on" || bad "action on"
 
 say "disable in manager"
+case "$(sh_dev "cat /data/adb/unbound/var/module.log")" in
+    *"inotifyd not available"*) bad "inotifyd watcher did not start" ;;
+    *) ok "inotifyd watcher running" ;;
+esac
 sh_dev "touch $MOD/disable"
-wait_until 10 "redirect removed when disabled" redirect_inactive
+wait_until 5 "redirect removed when disabled" redirect_inactive
 wait_until 10 "private dns restored" sh -c "[ \"\$(adb shell settings get global private_dns_mode | tr -d '\r')\" = opportunistic ]"
 resolves www.google.com && ok "DNS works after disable" || bad "DNS after disable"
 
