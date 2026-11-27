@@ -417,7 +417,9 @@ cmd_redirect() {
         while [ "$_t" -lt 10 ]; do
             if redirect_active; then _is=1; else _is=0; fi
             [ "$_is" = "$_want" ] && break
-            unbound_running || break
+            # Without Unbound the redirect cannot come on; switching it off
+            # never depends on Unbound, so keep waiting for that.
+            [ "$_want" = 1 ] && ! unbound_running && break
             sleep 1; _t=$((_t + 1))
         done
     fi
