@@ -10,6 +10,9 @@ these notes.
   checks for stop/disable every 30 seconds without starting any process,
   and runs the firewall rule check, list refresh check and statistics
   snapshot every 5 minutes (about 25 times less CPU in testing).
+- Disabling or removing the module in the manager takes effect at once: the
+  folder is watched with inotifyd, which costs nothing while idle. Where
+  inotifyd is missing, the module checks every 10 seconds.
 - Fix: restarting Unbound could leave the status showing it as stopped.
 
 ## v1.26.2-r7

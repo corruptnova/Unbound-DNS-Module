@@ -373,4 +373,27 @@ assert_eq "private dns restored" "hostname" "$(cat "$STUB_STATE/settings/private
 assert_eq "private dns spec restored" "dns.example.net" "$(cat "$STUB_STATE/settings/private_dns_specifier")"
 rm -f "$MOD/disable"
 
+# --- disabling in the manager is noticed at once (inotifyd watches the folder) ---
+if command -v toybox >/dev/null 2>&1; then
+    UNBOUND_POLL=60 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
+    wait_for 10 jump_present
+    sleep 1
+    touch "$MOD/disable"
+    wait_for 3 daemon_gone && pass || fail "disable noticed within 3 s"
+    rm -f "$MOD/disable"
+    wait_for 5 jump_absent
+else
+    echo "note: toybox not installed; skipped the inotifyd check"
+fi
+
+# --- without inotifyd, disabling is still noticed within the 10 s fallback ---
+touch "$STUB_STATE/no-inotifyd"
+UNBOUND_POLL=60 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
+wait_for 10 jump_present
+sleep 1
+touch "$MOD/disable"
+wait_for 14 daemon_gone && pass || fail "disable noticed within the fallback interval"
+assert_contains "fallback logged" "checking for disable every 10 s" "$(cat "$D/var/module.log")"
+rm -f "$MOD/disable" "$STUB_STATE/no-inotifyd"
+
 done_testing

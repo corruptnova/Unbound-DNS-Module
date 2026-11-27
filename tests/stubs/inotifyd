@@ -1,0 +1,19 @@
+#!/bin/sh
+# Test stand-in for inotifyd: runs toybox's and calls PROG through sh (the
+# real inotifyd executes it directly). Behaves like a missing inotifyd when
+# toybox is absent or $STUB_STATE/no-inotifyd exists.
+command -v toybox >/dev/null 2>&1 || exit 127
+[ -f "$STUB_STATE/no-inotifyd" ] && exit 127
+prog="$1"; shift
+fifo="$STUB_STATE/inotifyd.$$"
+rm -f "$fifo"; mkfifo "$fifo" || exit 1
+toybox inotifyd - "$@" > "$fifo" &
+tp=$!
+trap 'kill "$tp" 2>/dev/null; rm -f "$fifo"; exit 0' TERM INT
+tab="$(printf '\t')"
+while IFS="$tab" read -r ev dir file; do
+    sh "$prog" "$ev" "$dir" "$file"
+done < "$fifo" &
+wait "$!"
+kill "$tp" 2>/dev/null
+rm -f "$fifo"

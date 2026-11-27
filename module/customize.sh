@@ -24,7 +24,7 @@ rm -rf "$MODPATH/bin/arm64-v8a" "$MODPATH/bin/armeabi-v7a" "$MODPATH/bin/x86_64"
 
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 set_perm_recursive "$MODPATH/bin" 0 0 0755 0755
-for f in ctl.sh service.sh action.sh uninstall.sh; do
+for f in ctl.sh service.sh action.sh uninstall.sh lib/notify.sh; do
     set_perm "$MODPATH/$f" 0 0 0755
 done
 

@@ -201,6 +201,8 @@ module_off() { [ -f "$MODDIR/disable" ] || [ -f "$MODDIR/remove" ]; }
 # Event-driven so it costs next to nothing while the phone is awake:
 #   - Unbound is our child; when it exits, SIGCHLD wakes us at once.
 #   - ctl.sh (WebUI, Action button) sends SIGUSR1 after changing anything.
+#   - inotifyd watches the module folder and wakes us the moment the manager
+#     creates "disable" or "remove". Without inotifyd we look every 10 s.
 #   - Every UNBOUND_POLL seconds (30) we look for stop/disable flags using
 #     shell builtins only, no extra processes.
 #   - Every UNBOUND_MAINT seconds (300) we do the heavier checks: the
@@ -209,13 +211,25 @@ module_off() { [ -f "$MODDIR/disable" ] || [ -f "$MODDIR/remove" ]; }
 # uptime_now: whole seconds since boot in $_now, without starting a process.
 uptime_now() { read -r _upt _x < /proc/uptime; _now="${_upt%%.*}"; }
 
-# child_alive: our Unbound child exists and is not a zombie (builtins only).
-child_alive() {
-    [ -n "$_child" ] || return 1
+# proc_alive PID: the process exists and is not a zombie (builtins only).
+proc_alive() {
+    [ -n "$1" ] || return 1
     _st=""
-    read -r _st < "/proc/$_child/stat" 2>/dev/null || return 1
+    read -r _st < "/proc/$1/stat" 2>/dev/null || return 1
     case "$_st" in *") Z "*) return 1 ;; esac
     return 0
+}
+
+# child_alive: our Unbound child is running.
+child_alive() { proc_alive "$_child"; }
+
+# watch_start: run inotifyd (busybox or toybox) on the module folder; it
+# sleeps in the kernel until a file is created ("n") or renamed into it ("y").
+# The mask starts with a spare "n" because toybox 0.8.9 skips the first
+# letter after ":".
+watch_start() {
+    UNBOUND_DAEMON_PID=$$ inotifyd "$LIB_DIR/notify.sh" "$MODDIR:nny" >/dev/null 2>&1 &
+    _watch=$!
 }
 
 daemon_main() {
@@ -237,6 +251,7 @@ daemon_main() {
     _poll="${UNBOUND_POLL:-30}"
     _maint_every="${UNBOUND_MAINT:-300}"
     _child=""; _applied=0; _pd_done=0; _backoff=5; _next_try=0
+    watch_start
     uptime_now; _next_maint="$_now"
     while [ "$_stop" = 0 ] && [ ! -f "$RUN/stop" ] && ! module_off; do
         uptime_now
@@ -294,6 +309,15 @@ daemon_main() {
             stats_bank
         fi
 
+        # Checked just before sleeping: a child that exited during this pass
+        # has already had its SIGCHLD and will not wake us again.
+        if [ -n "$_watch" ] && ! proc_alive "$_watch"; then
+            wait "$_watch" 2>/dev/null
+            _watch=""
+            [ "$_poll" -gt 10 ] && _poll=10
+            log "daemon: inotifyd not available; checking for disable every $_poll s"
+        fi
+
         # Sleep until the next poll, a retry is due, a signal arrives or a
         # child exits, whichever comes first.
         _wait="$_poll"
@@ -309,6 +333,10 @@ daemon_main() {
         kill "$_sl" 2>/dev/null
     done
 
+    if [ -n "$_watch" ]; then
+        kill "$_watch" 2>/dev/null
+        wait "$_watch" 2>/dev/null
+    fi
     redirect_remove
     stop_unbound
     if module_off; then
