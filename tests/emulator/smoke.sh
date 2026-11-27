@@ -201,7 +201,10 @@ sh_dev "echo 'server:' >> /data/adb/unbound/custom.conf; echo '    this-is-not-a
 ctl restart >/dev/null
 wait_until 30 "redirect removed while Unbound cannot start" redirect_inactive
 wait_until 30 "DNS keeps working with a broken config" resolves www.google.com
-ctl status | grep -q '"error":"[^"]' && ok "status reports the start error" || bad "no start error in status"
+# The error is recorded when the next start attempt fails, a moment after
+# the redirect is removed.
+status_has_error() { ctl status | grep -q '"error":"[^"]'; }
+wait_until 20 "status reports the start error" status_has_error
 sh_dev "sed -i '/this-is-not-an-option/d' /data/adb/unbound/custom.conf"
 ctl restart >/dev/null
 wait_until 60 "recovers once the config is fixed" redirect_active
