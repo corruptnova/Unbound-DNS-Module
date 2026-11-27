@@ -456,7 +456,10 @@ UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
 wait_for 10 jump_present
 assert_eq "policy loaded: learning" "learning" "$(se_state)"
 assert_contains "binary labelled" "chcon u:object_r:unbound_dns_exec:s0 $MOD/bin/unbound" "$(cat "$STUB_STATE/calls.log")"
-assert_contains "started in its domain" "runcon u:r:unbound_dns:s0 $MOD/bin/unbound -d -c" "$(cat "$STUB_STATE/calls.log")"
+assert_contains "started in its domain" "runcon -- u:r:unbound_dns:s0 $MOD/bin/unbound -d -c" "$(cat "$STUB_STATE/calls.log")"
+# The stub parses like BusyBox's runcon, which took Unbound's -d for its own
+# option when no "--" came first.
+assert_contains "BusyBox-style runcon needs --" "Usage: runcon" "$(runcon u:r:unbound_dns:s0 /bin/true -d 2>&1)"
 assert_eq "context checked with the kernel" "u:r:unbound_dns:s0" "$(cat "$SEFS/context")"
 ctl stop >/dev/null; wait_for 10 daemon_gone
 # The domain does not work: run Unbound the old way and say why.
@@ -465,7 +468,7 @@ UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
 wait_for 15 jump_present && pass || fail "unbound runs after falling back"
 assert_eq "fallback reported" "fallback" "$(se_state)"
 assert_contains "fallback logged" "selinux: Unbound could not start in its own domain" "$(cat "$D/log/module.log")"
-assert_contains "reason kept" "Permission denied" "$(ctl selinux-report)"
+assert_contains "reason kept" "can't set up security context" "$(ctl selinux-report)"
 ctl stop >/dev/null; wait_for 10 daemon_gone
 rm -f "$STUB_STATE/runcon.fail"
 # Accesses logged for the domain are kept, each kind once, without pids.
@@ -473,11 +476,14 @@ cat > "$STUB_STATE/dmesg.txt" <<'EOF'
 [   12.3] audit: type=1400 audit(1.2:3): avc:  denied  { read } for  pid=1234 comm="unbound" name="root.key" dev="dm-5" ino=42 scontext=u:r:unbound_dns:s0 tcontext=u:object_r:adb_data_file:s0 tclass=file permissive=1
 [   12.4] audit: type=1400 audit(1.2:4): avc:  denied  { read } for  pid=999 comm="unbound" name="root.key" dev="dm-5" ino=43 scontext=u:r:unbound_dns:s0 tcontext=u:object_r:adb_data_file:s0 tclass=file permissive=1
 [   12.5] audit: type=1400 audit(1.2:5): avc:  denied  { read } for  pid=5 comm="other" scontext=u:r:untrusted_app:s0 tcontext=u:object_r:system_file:s0 tclass=file permissive=0
+[   12.6] audit: audit_lost=3 audit_rate_limit=5 audit_backlog_limit=64
+[   13.0] audit: audit_lost=7 audit_rate_limit=5 audit_backlog_limit=64
 EOF
 printf '%s\n' '11-27 10:00:00.000  1234  1234 W unbound : type=1400 audit(0.0:7): avc:  denied  { name_bind } for  src=5335 scontext=u:r:unbound_dns:s0 tcontext=u:object_r:port:s0 tclass=udp_socket permissive=1' > "$STUB_STATE/logcat.txt"
 report="$(ctl selinux-report)"
 assert_eq "two kinds kept" "2" "$(printf '%s\n' "$report" | grep -c 'avc: denied')"
 assert_not_contains "pids dropped" "pid=" "$report"
+assert_contains "dropped audit messages shown" "dropped since boot (all apps): 7" "$report"
 assert_contains "socket kind kept" "{ name_bind }" "$report"
 assert_not_contains "other domains ignored" "untrusted_app" "$report"
 assert_eq "kept across reports" "2" "$(rm -f "$STUB_STATE/dmesg.txt"; ctl selinux-report | grep -c 'avc: denied')"

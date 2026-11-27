@@ -424,6 +424,10 @@ cmd_selinux_report() {
     fi
     _n=0; [ -f "$SE_DENIALS" ] && _n="$(grep -c 'avc:' "$SE_DENIALS")"
     echo "kinds of access logged for unbound_dns: $_n"
+    # The kernel drops audit messages beyond a few per second; a permissive
+    # domain logs each kind once per boot, so a dropped one waits for a reboot.
+    _lost="$(dmesg 2>/dev/null | grep -o 'audit_lost=[0-9]*' | tail -n 1)"
+    [ -n "$_lost" ] && echo "audit messages the kernel dropped since boot (all apps): ${_lost#audit_lost=}"
     cat "$SE_DENIALS" 2>/dev/null
 }
 

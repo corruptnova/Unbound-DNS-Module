@@ -196,7 +196,10 @@ _launch() {
     # is looked at when it fails.
     _mark=$(( $(wc -c < "$UBLOG") + 1 ))
     if [ "${1:-}" = confined ]; then
-        runcon "u:r:$SE_DOMAIN:s0" "$BIN/unbound" -d -c "$CONF" >> "$UBLOG" 2>&1 &
+        # "--" first: BusyBox's runcon (the one root managers' scripts get)
+        # reads options after PROG too and would take Unbound's -d and -c;
+        # toybox's skips the "--".
+        runcon -- "u:r:$SE_DOMAIN:s0" "$BIN/unbound" -d -c "$CONF" >> "$UBLOG" 2>&1 &
     else
         "$BIN/unbound" -d -c "$CONF" >> "$UBLOG" 2>&1 &
     fi
@@ -375,7 +378,7 @@ daemon_main() {
     uptime_now; _next_maint="$_now"
     while [ "$_stop" = 0 ] && [ ! -f "$RUN/stop" ] && ! module_off; do
         uptime_now
-        _maint=0
+        _maint=0; _started=0
         if [ "$_now" -ge "$_next_maint" ]; then
             _maint=1; _next_maint=$((_now + _maint_every))
         fi
@@ -394,7 +397,7 @@ daemon_main() {
             if [ "$_now" -ge "$_next_try" ]; then
                 if start_unbound; then
                     read -r _child < "$RUN/unbound.pid"
-                    _backoff=5
+                    _backoff=5; _started=1
                 else
                     uptime_now
                     _next_try=$((_now + _backoff))
@@ -428,6 +431,9 @@ daemon_main() {
         if [ "$_maint" = 1 ]; then
             rotate_logs
             stats_bank
+        fi
+        # Also right after a start, which logs the most new kinds of access.
+        if [ "$_maint" = 1 ] || [ "$_started" = 1 ]; then
             _sem=""; read -r _sem < "$RUN/selinux" 2>/dev/null
             [ "$_sem" = learning ] && se_harvest
         fi

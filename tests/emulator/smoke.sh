@@ -120,6 +120,12 @@ case "$(ctl selinux-report)" in
     "state: unconfined"*) ok "selinux-report works" ;;
     *) bad "selinux-report: $(ctl selinux-report | head -n 1)" ;;
 esac
+# The module starts Unbound with "runcon -- CONTEXT PROG ARGS" ("--" for
+# BusyBox's runcon); Android's toybox runcon must take that form too.
+_ctx="$(sh_dev 'id -Z')"
+_got="$(sh_dev "runcon -- $_ctx /system/bin/id -Z 2>&1")"
+[ -n "$_ctx" ] && [ "$_got" = "$_ctx" ] && ok "toybox runcon accepts the module's form" \
+    || bad "toybox runcon -- $_ctx: $_got"
 
 say "resolution goes through Unbound"
 q0="$(ctl status | sed -n 's/.*"queries":\([0-9]*\).*/\1/p')"
