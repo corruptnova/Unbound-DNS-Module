@@ -11,7 +11,8 @@
 #
 # A statement naming a type or permission this device does not have is
 # skipped, so types that only some devices have get statements of their own,
-# and each statement names only permissions all its classes have.
+# and each statement names only permissions all its classes have. KernelSU
+# skips a whole line whose { ... } holds more than 100 characters.
 
 type unbound_dns domain
 type unbound_dns_exec { file_type exec_type }
@@ -25,7 +26,8 @@ allow unbound_dns_data_file labeledfs filesystem associate
 # Android's rules for all domains reach a new domain only where they name other
 # types; the ones about a process's own resources must be given here. ("self"
 # is a policy compiler's shorthand; the root managers want the type's name.)
-allow unbound_dns unbound_dns process { fork sigchld signal signull sigkill getsched setsched getattr getpgid setpgid getsession getcap setcap setrlimit }
+allow unbound_dns unbound_dns process { fork sigchld signal signull sigkill getsched setsched getattr }
+allow unbound_dns unbound_dns process { getpgid setpgid getsession getcap setcap setrlimit }
 allow unbound_dns unbound_dns fd use
 allow unbound_dns unbound_dns dir { getattr open read search }
 allow unbound_dns unbound_dns file { getattr open read }
@@ -74,7 +76,8 @@ allow unbound_dns postinstall_mnt_dir dir getattr
 # inherits and may tell its parent it exited.
 allow ksu unbound_dns_exec file { getattr open read execute relabelfrom relabelto }
 allow ksu unbound_dns_exec file map
-allow ksu unbound_dns_data_file dir { getattr setattr open read write search add_name remove_name create rmdir rename reparent ioctl lock relabelfrom relabelto }
+allow ksu unbound_dns_data_file dir { getattr setattr open read write search add_name remove_name create rmdir }
+allow ksu unbound_dns_data_file dir { rename reparent ioctl lock relabelfrom relabelto }
 allow ksu unbound_dns_data_file { file lnk_file sock_file fifo_file } { getattr setattr open read write append create unlink rename link ioctl lock relabelfrom relabelto }
 allow ksu unbound_dns_data_file file map
 allow ksu unbound_dns process { transition siginh rlimitinh noatsecure signal sigkill signull getattr }
@@ -86,7 +89,8 @@ allow unbound_dns ksu process sigchld
 
 allow magisk unbound_dns_exec file { getattr open read execute relabelfrom relabelto }
 allow magisk unbound_dns_exec file map
-allow magisk unbound_dns_data_file dir { getattr setattr open read write search add_name remove_name create rmdir rename reparent ioctl lock relabelfrom relabelto }
+allow magisk unbound_dns_data_file dir { getattr setattr open read write search add_name remove_name create rmdir }
+allow magisk unbound_dns_data_file dir { rename reparent ioctl lock relabelfrom relabelto }
 allow magisk unbound_dns_data_file { file lnk_file sock_file fifo_file } { getattr setattr open read write append create unlink rename link ioctl lock relabelfrom relabelto }
 allow magisk unbound_dns_data_file file map
 allow magisk unbound_dns process { transition siginh rlimitinh noatsecure signal sigkill signull getattr }
@@ -98,7 +102,8 @@ allow unbound_dns magisk process sigchld
 
 allow su unbound_dns_exec file { getattr open read execute relabelfrom relabelto }
 allow su unbound_dns_exec file map
-allow su unbound_dns_data_file dir { getattr setattr open read write search add_name remove_name create rmdir rename reparent ioctl lock relabelfrom relabelto }
+allow su unbound_dns_data_file dir { getattr setattr open read write search add_name remove_name create rmdir }
+allow su unbound_dns_data_file dir { rename reparent ioctl lock relabelfrom relabelto }
 allow su unbound_dns_data_file { file lnk_file sock_file fifo_file } { getattr setattr open read write append create unlink rename link ioctl lock relabelfrom relabelto }
 allow su unbound_dns_data_file file map
 allow su unbound_dns process { transition siginh rlimitinh noatsecure signal sigkill signull getattr }
