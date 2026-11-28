@@ -367,6 +367,21 @@ touch "$STUB_STATE/anchor.update"
 assert_contains "anchor updated" '"applied":true' "$(ctl anchor-update)"
 assert_contains "new anchor installed" "99999" "$(cat "$D/var/root.key")"
 rm -f "$STUB_STATE/anchor.update"
+# unbound-anchor runs unprivileged (nobody, inet group) in its own folder,
+# reached through fd 3; root reads the result back with that user's rights.
+assert_contains "unbound-anchor runs unprivileged" \
+    "dropexec run 9999 9999 3003 $MOD/bin/unbound-anchor -v -a /proc/self/fd/3/anchor.key -C /proc/self/fd/3/anchor.conf" \
+    "$(grep "^dropexec run" "$STUB_STATE/calls.log")"
+assert_contains "new anchor read with that user's rights" "dropexec read 9999 9999 $D/run/anchor anchor.key" \
+    "$(grep "^dropexec read" "$STUB_STATE/calls.log")"
+[ ! -e "$D/run/anchor" ] && pass || fail "anchor work folder left behind"
+# What it leaves is not trusted: a link instead of the anchor is refused.
+echo "not an anchor" > "$STUB_STATE/anchor.victim"; touch "$STUB_STATE/anchor.link"
+_before="$(cat "$D/var/root.key")"
+assert_contains "linked anchor refused" "could not be read" "$(ctl anchor-update)"
+assert_eq "installed anchor unchanged" "$_before" "$(cat "$D/var/root.key")"
+assert_eq "link target untouched" "not an anchor" "$(cat "$STUB_STATE/anchor.victim")"
+rm -f "$STUB_STATE/anchor.link" "$STUB_STATE/anchor.victim"
 assert_contains "anchor reset" '"applied":true' "$(ctl anchor-reset)"
 assert_eq "built-in anchor restored" "$(cat "$MOD/conf/root.key")" "$(cat "$D/var/root.key")"
 # Once running, Unbound rewrites root.key in its own format: tab-separated

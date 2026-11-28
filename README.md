@@ -95,7 +95,8 @@ What goes into the zip:
 - **Unbound** (`unbound`, `unbound-control`, `unbound-anchor`), statically
   linked with **OpenSSL 3.5 LTS** and **expat**;
 - an HTTPS-only **curl** for list downloads, run as an unprivileged user
-  through a small helper (`dropexec`, in `src/`).
+  through a small helper (`dropexec`, in `src/`), like `unbound-anchor`
+  when it checks the trust anchor with IANA.
 
 Every source tarball must carry a good release signature from its project's
 key in `keys/` (see `keys/README.md`) and match the sha256 pinned in

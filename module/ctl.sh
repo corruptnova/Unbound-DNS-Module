@@ -310,31 +310,58 @@ _do_custom_set() {
 }
 
 # anchor-update: ask IANA for the current root trust anchor. unbound-anchor
-# resolves through the running Unbound (port 5335), so it works whether or
-# not the redirect is on.
+# looks it up through the running Unbound (port 5335, so it works whether or
+# not the redirect is on) and, if that fails, fetches it over HTTPS from
+# data.iana.org. Like list downloads, it runs as the unprivileged DL_UID with
+# only the "inet" group. It cannot open anything under /data/adb, so it works
+# in a folder of its own in run/, handed to it as fd 3 (/proc/self/fd/3/...),
+# where it may also replace the anchor file; root reads the result back with
+# that user's rights (a regular file, no links) before installing it.
 cmd_anchor_update() {
     unbound_running || die "Unbound is not running"
-    ub_read root.key > "$RUN/anchor.key" 2>/dev/null && [ -s "$RUN/anchor.key" ] \
-        || cp -f "$MODDIR/conf/root.key" "$RUN/anchor.key"
+    lock anchor || die "busy: a trust anchor update is running"
+    _anchor_update; _arc=$?
+    unlock anchor
+    return "$_arc"
+}
+
+_anchor_fail() {
+    rm -rf "$RUN/anchor" "$RUN/anchor.key"
+    log "trust anchor: update failed: $1"
+    printf '{"ok":false,"error":"%s"}\n' "$(json_esc "Update failed: $1")"
+    return 1
+}
+
+_anchor_update() {
+    _aw="$RUN/anchor"
+    rm -rf "$_aw" "$RUN/anchor.conf"
+    mkdir -m 0700 "$_aw" || _anchor_fail "cannot create $_aw" || return 1
+    ub_read root.key > "$_aw/anchor.key" 2>/dev/null && [ -s "$_aw/anchor.key" ] \
+        || cp -f "$MODDIR/conf/root.key" "$_aw/anchor.key"
     printf 'server:\n    do-not-query-localhost: no\nforward-zone:\n    name: "."\n    forward-addr: 127.0.0.1@%s\n' \
-        "$UB_PORT" > "$RUN/anchor.conf"
-    _out="$("$BIN/unbound-anchor" -v -a "$RUN/anchor.key" -C "$RUN/anchor.conf" 2>&1)"
+        "$UB_PORT" > "$_aw/anchor.conf"
+    # Both files are written before the folder is handed over (last).
+    chown "$DL_UID:$DL_UID" "$_aw/anchor.key" "$_aw/anchor.conf" "$_aw" 2>/dev/null
+    _out="$("$BIN/dropexec" run "$DL_UID" "$DL_UID" "$UB_UID" "$BIN/unbound-anchor" -v \
+        -a /proc/self/fd/3/anchor.key -C /proc/self/fd/3/anchor.conf 3< "$_aw" 2>&1)"
     case "$_out" in
         *"success: the anchor is ok"*)
+            rm -rf "$_aw"
             log "trust anchor: up to date"
             printf '{"ok":true,"changed":false}\n'
             return 0 ;;
         *"success:"*) ;;
         *)
             _e="$(printf '%s\n' "$_out" | grep -v '^[[:space:]]*$' | tail -n 1)"
-            log "trust anchor: update failed: $_e"
-            printf '{"ok":false,"error":"%s"}\n' "$(json_esc "Update failed: ${_e:-no answer from unbound-anchor}")"
+            _anchor_fail "${_e:-no answer from unbound-anchor}"
             return 1 ;;
     esac
+    "$BIN/dropexec" read "$DL_UID" "$DL_UID" "$_aw" anchor.key 1048576 > "$RUN/anchor.key" 2>/dev/null \
+        && [ -s "$RUN/anchor.key" ] || { _anchor_fail "the new anchor could not be read"; return 1; }
+    rm -rf "$_aw"
     run_locked apply 120 _do_anchor_install "$RUN/anchor.key" "trust anchor updated"
 }
 
-# _do_anchor_install FILE WHAT
 _do_anchor_install() {
     backup_files
     install_root_key "$1"

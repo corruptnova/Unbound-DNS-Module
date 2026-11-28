@@ -10,6 +10,11 @@ these notes.
   M3 switches, radio rows, outlined fields, segmented log tabs, snackbars
   and a bottom bar for unsaved settings. Everything is still local; nothing
   is loaded from the internet.
+- Security: the trust anchor check ("Update trust anchor"), which fetches
+  data from the internet and parses it, no longer runs as root.
+  `unbound-anchor` now runs as an unprivileged user with only network
+  access, like list downloads, in a folder of its own; the module reads its
+  result back with that user's rights (refusing links) before installing it.
 - Fix: a blocklist update started from the WebUI ran inside the root
   manager app's cgroups, so Android killed or froze it along with the app;
   its lock then stayed, and once Android reused its process id for another
