@@ -115,6 +115,13 @@ else
     echo "note: no global IPv4 address; skipped the non-loopback source check"
 fi
 assert_ok "reload_keep_cache over unix socket" "$UCTL" -c "$T/control.conf" reload_keep_cache
+# What the status reads for the DNS cache tile.
+_st="$("$UCTL" -c "$T/control.conf" stats_noreset)"
+for k in mem.cache.message mem.cache.rrset msg.cache.count; do
+    printf '%s\n' "$_st" | grep -q "^$k=[0-9]" && pass || fail "stats_noreset has no $k"
+done
+assert_eq "cache limit from Unbound" "8388608" "$("$UCTL" -c "$T/control.conf" get_option msg-cache-size)"
+assert_ok "plain reload (Clear DNS cache) over unix socket" "$UCTL" -c "$T/control.conf" reload
 assert_contains "still blocking after reload" "status: NXDOMAIN" "$(q ads.example.com A)"
 assert_contains "identity hidden" "status: REFUSED" "$(q id.server CH TXT)"
 

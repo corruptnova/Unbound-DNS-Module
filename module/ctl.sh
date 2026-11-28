@@ -52,6 +52,7 @@ usage: ctl.sh <command> [args]
   log [module|unbound] [N]   last N log lines (default 200)
   diag                       troubleshooting report (paste it into a bug report)
   stats-reset                start the query statistics from zero
+  cache-clear                empty Unbound's DNS cache
 
   setup | daemon | uninstall-cleanup   used by the module itself
 EOF
@@ -73,13 +74,24 @@ run_locked() {
 }
 
 status_json() {
-    _run=0; _pid=""; _q=0; _hits=0; _up=0; _mem=0; _err=""
+    _run=0; _pid=""; _q=0; _hits=0; _up=0; _mem=0; _err=""; _cb=0; _ca=0; _cm=0
     if unbound_running; then
         _run=1; _pid="$(unbound_pid)"
         _stats="$(ubctl stats_noreset 2>/dev/null)"
         _q="$(json_num "$(printf '%s\n' "$_stats" | sed -n 's/^total\.num\.queries=//p')")"
         _hits="$(json_num "$(printf '%s\n' "$_stats" | sed -n 's/^total\.num\.cachehits=//p')")"
         _up="$(printf '%s\n' "$_stats" | sed -n 's/^time\.up=\([0-9]*\).*/\1/p')"
+        # The DNS cache as it is now (answers and the records in them), and
+        # the most it may grow to, as Unbound runs it (custom.conf included).
+        _cb=$(( $(json_num "$(printf '%s\n' "$_stats" | sed -n 's/^mem\.cache\.message=//p')") \
+              + $(json_num "$(printf '%s\n' "$_stats" | sed -n 's/^mem\.cache\.rrset=//p')") ))
+        _ca="$(json_num "$(printf '%s\n' "$_stats" | sed -n 's/^msg\.cache\.count=//p')")"
+        _cm="$(cat "$RUN/cache.max" 2>/dev/null)"
+        if [ -z "$_cm" ]; then
+            _cm=$(( $(json_num "$(ubctl get_option msg-cache-size 2>/dev/null)") \
+                  + $(json_num "$(ubctl get_option rrset-cache-size 2>/dev/null)") ))
+            [ "$_cm" -gt 0 ] && echo "$_cm" > "$RUN/cache.max"
+        fi
         _mem="$(sed -n 's/^VmRSS:[[:space:]]*\([0-9]*\).*/\1/p' "/proc/$_pid/status" 2>/dev/null)"
     fi
     # The last failed start, kept through retries until a start succeeds.
@@ -102,6 +114,7 @@ status_json() {
     printf '"queries":%s,"cache_hits":%s,"stats_since":%s,"uptime":%s,"memory_kb":%s,' \
         "$(( $(stat_get QUERIES) + $(json_num "$_q") ))" "$(( $(stat_get CACHE_HITS) + $(json_num "$_hits") ))" \
         "$(stat_get SINCE)" "$(json_num "$_up")" "$(json_num "$_mem")"
+    printf '"cache_bytes":%s,"cache_max_bytes":%s,"cache_answers":%s,' "$_cb" "$(json_num "$_cm")" "$_ca"
     printf '"blocked":%s,"updating":%s,"last_update":%s,"last_update_ok":%s,' \
         "$(json_num "$(cat "$BLOCK_COUNT" 2>/dev/null)")" "$(locked update && echo true || echo false)" \
         "$(json_num "$(setting_get LAST_UPDATE 0)")" "$(json_bool "$(setting_get LAST_UPDATE_OK 1)")"
@@ -436,6 +449,20 @@ cmd_diag() {
     tail -n 40 "$UBLOG" 2>/dev/null
 }
 
+# cache-clear: empty Unbound's DNS cache. A reload drops every cached
+# answer; flush_zone would only mark them expired, and with serve-expired
+# Unbound would keep them (and their memory). The reload also re-reads the
+# configuration and zeroes the counters, which are saved first. Queries wait
+# for it, a moment with big blocklists.
+_do_cache_clear() {
+    unbound_running || die "Unbound is not running"
+    stats_bank
+    ubctl reload >/dev/null 2>&1 || die "Unbound did not reload"
+    rm -f "$RUN/cache.max"
+    log "cache: cleared"
+    printf '{"ok":true}\n'
+}
+
 cmd_redirect() {
     case "$1" in
         on) _want=1 ;;
@@ -572,6 +599,7 @@ case "$cmd" in
         private_dns_restore ;;
     diag) cmd_diag ;;
     stats-reset) stats_reset && printf '{"ok":true}\n' ;;
+    cache-clear) run_locked apply 60 _do_cache_clear ;;
     settings) settings_json ;;
     settings-apply) cmd_settings_apply "$@" ;;
     settings-reset) run_locked apply 120 _do_settings_reset ;;

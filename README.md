@@ -83,6 +83,11 @@ deletes it and restores Private DNS.
 - **Some kernels lack IPv6 NAT or string match.** IPv6 DNS, or the 464XLAT
   helper, then can't be handled. The WebUI says so, and DNS keeps working.
 - **Memory:** about 400 bytes per blocked domain (250,000 domains ≈ 100 MB).
+  "Memory in use" is what Unbound uses right now, blocklist included; "DNS
+  cache" is the part holding answers, out of the most the cache size
+  setting allows.
+- **Clear DNS cache** empties Unbound's cache. Android also keeps recent
+  answers for a while, so an app can still get an old one until it expires.
 - **Use one DNS blocker at a time:** other DNS modules and VPN-based blockers
   conflict with this one.
 - **The clock must be roughly right.** DNSSEC fails with a badly wrong clock.

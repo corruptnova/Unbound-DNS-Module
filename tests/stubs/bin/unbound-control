@@ -2,19 +2,27 @@
 # Fake unbound-control: talks to the fake unbound through its pid file.
 # Counters live in $STUB_STATE/ub.queries and ub.hits; like the real one,
 # "stats" and a reload zero them (a restart does too, see the fake unbound).
+# The cache holds $STUB_STATE/ub.cached answers until a plain "reload".
 shift 2   # -c CONF
 echo "unbound-control $*" >> "$STUB_STATE/calls.log"
 pid="$(cat "$STUB_STATE/unbound.pid" 2>/dev/null)"
 up() { [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; }
 q="$(cat "$STUB_STATE/ub.queries" 2>/dev/null || echo 0)"
 h="$(cat "$STUB_STATE/ub.hits" 2>/dev/null || echo 0)"
+c="$(cat "$STUB_STATE/ub.cached" 2>/dev/null || echo 0)"
 zero() { echo 0 > "$STUB_STATE/ub.queries"; echo 0 > "$STUB_STATE/ub.hits"; }
+# Like Unbound: an empty cache still takes 64 KiB per part, plus 1 KiB per answer.
+cache() { printf 'mem.cache.rrset=%s\nmem.cache.message=%s\nmsg.cache.count=%s\nrrset.cache.count=%s\n' \
+    $((66104 + c * 512)) $((66104 + c * 512)) "$c" "$((c * 2))"; }
 case "$1" in
     status) up ;;
     stop) up && kill "$pid" ;;
-    stats_noreset) up && printf 'total.num.queries=%s\ntotal.num.cachehits=%s\ntime.up=12.5\n' "$q" "$h" ;;
-    stats) up && printf 'total.num.queries=%s\ntotal.num.cachehits=%s\ntime.up=12.5\n' "$q" "$h" && zero ;;
-    reload|reload_keep_cache) up && zero && echo ok ;;
+    stats_noreset) up && printf 'total.num.queries=%s\ntotal.num.cachehits=%s\ntime.up=12.5\n' "$q" "$h" && cache ;;
+    stats) up && printf 'total.num.queries=%s\ntotal.num.cachehits=%s\ntime.up=12.5\n' "$q" "$h" && cache && zero ;;
+    reload) up && zero && echo 0 > "$STUB_STATE/ub.cached" && echo ok ;;
+    reload_keep_cache) up && zero && echo ok ;;
+    get_option)
+        case "$2" in msg-cache-size) echo 8388608 ;; rrset-cache-size) echo 16777216 ;; *) exit 1 ;; esac ;;
     log_reopen) up && echo ok ;;
     *) exit 1 ;;
 esac

@@ -168,6 +168,7 @@ private_dns_restore() {
 start_unbound() {
     # custom.conf may have been edited by hand since the last start.
     write_main_conf
+    rm -f "$RUN/cache.max"      # the cache's limit, read again from this run
     # Unbound logs to stderr (see unbound.conf). Only what this start wrote
     # is looked at when it fails.
     : >> "$UBLOG"

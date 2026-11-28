@@ -222,6 +222,24 @@ assert_contains "cache hits reset" '"cache_hits":0' "$(ctl status)"
 assert_contains "status version" '"version":"1.26.2"' "$json"
 assert_contains "status nat64 bypass" '"nat64_bypass_v6":"ok"' "$json"
 
+# The DNS cache: its size now (message + record caches) and its limit, as
+# Unbound reports them; clearing empties it without losing the counters.
+echo 100 > "$STUB_STATE/ub.cached"; stub_counts 7 2
+json="$(ctl status)"
+assert_contains "cache size now" "\"cache_bytes\":$(( 2 * (66104 + 100 * 512) ))," "$json"
+assert_contains "cache limit" '"cache_max_bytes":25165824,' "$json"
+assert_contains "cached answers" '"cache_answers":100,' "$json"
+assert_contains "cache cleared" '"ok":true' "$(ctl cache-clear)"
+json="$(ctl status)"
+assert_contains "cache empty after clearing" '"cache_answers":0,' "$json"
+assert_contains "cache size back to the empty size" "\"cache_bytes\":$(( 2 * 66104 ))," "$json"
+assert_contains "queries kept across clearing" '"queries":7' "$json"
+assert_contains "cleared with a plain reload" "unbound-control reload" "$(grep -x 'unbound-control reload' "$STUB_STATE/calls.log")"
+assert_contains "clearing logged" "cache: cleared" "$(cat "$D/log/module.log")"
+_g1="$(grep -c '^unbound-control get_option' "$STUB_STATE/calls.log")"
+ctl status >/dev/null
+assert_eq "cache limit not asked for again" "$_g1" "$(grep -c '^unbound-control get_option' "$STUB_STATE/calls.log")"
+
 # Unbound dies -> redirect removed, Unbound restarted, redirect back.
 log_mark="$(wc -l < "$D/log/module.log")"
 new_log_has() { tail -n +"$((log_mark + 1))" "$D/log/module.log" | grep -q "$1"; }

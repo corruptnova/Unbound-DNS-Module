@@ -120,6 +120,16 @@ q1="$(ctl status | sed -n 's/.*"queries":\([0-9]*\).*/\1/p')"
 [ "$q1" -gt "$q0" ] && ok "Unbound counted the queries ($q0 -> $q1)" || bad "query count did not grow ($q0 -> $q1)"
 ctl status | grep -q '"ipv6":"ok"' && ok "IPv6 DNS redirected" || echo "note: IPv6 NAT not available on this image"
 
+say "DNS cache"
+answers() { ctl status | sed -n 's/.*"cache_answers":\([0-9]*\).*/\1/p'; }
+before="$(answers)"
+[ "${before:-0}" -gt 0 ] && ok "cache holds answers ($before)" || bad "no cached answers: $(ctl status)"
+out="$(ctl cache-clear)"
+echo "$out" | grep -q '"ok":true' && ok "cache cleared" || bad "cache-clear: $out"
+after="$(answers)"
+[ "${after:-0}" -lt "${before:-0}" ] && ok "fewer cached answers after clearing ($after)" || bad "cache after clearing: $after (was $before)"
+resolves www.wikipedia.org && ok "resolves after clearing the cache" || bad "resolve after cache clear"
+
 say "NAT64 discovery bypass (ipv4only.arpa goes to the network's DNS64)"
 if ctl status | grep -q '"nat64_bypass_v4":"ok"'; then
     ok "bypass rule installed on this kernel"

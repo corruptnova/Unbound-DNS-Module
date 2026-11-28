@@ -24,6 +24,13 @@ function duration(s) {
   return `${Math.floor(s / 86400)} days`;
 }
 
+// "1.2 of 24 MB": the DNS cache now, out of the most it may use.
+function cacheSize(bytes, max) {
+  if (!bytes) return '—';
+  const mb = (b) => (b >= 10 * 1048576 ? String(Math.round(b / 1048576)) : (b / 1048576).toFixed(1));
+  return max ? `${mb(bytes)} of ${Math.round(max / 1048576)} MB` : `${mb(bytes)} MB`;
+}
+
 function mem(kb) {
   if (!kb) return '—';
   return kb > 10240 ? `${Math.round(kb / 1024)} MB` : `${(kb / 1024).toFixed(1)} MB`;
@@ -53,6 +60,7 @@ function renderStatus(s) {
       : 'Unbound is running, but apps use the network\'s DNS. Turn it back on after signing in to Wi-Fi.';
   }
   btn.disabled = false;
+  $('cache-btn').disabled = !s.running;
   btn.textContent = s.redirect_enabled ? 'Turn off' : 'Turn on';
   btn.classList.toggle('primary', !s.redirect_enabled);
 
@@ -62,7 +70,9 @@ function renderStatus(s) {
     ...[
       ['Queries', nf.format(s.queries || 0)],
       ['From cache', s.queries ? `${hit}%` : '—'],
-      ['Memory', mem(s.memory_kb)],
+      ['DNS cache', s.running ? cacheSize(s.cache_bytes, s.cache_max_bytes) : '—'],
+      ['Cached answers', s.running ? nf.format(s.cache_answers || 0) : '—'],
+      ['Memory in use', mem(s.memory_kb)],
       ['Uptime', duration(s.uptime)],
       ['IPv6 DNS', !s.redirect_active ? '—'
         : ({ ok: 'Redirected', unsupported: 'Not redirected' }[s.ipv6] || '—')],
@@ -290,6 +300,7 @@ function init() {
     () => act(() => ctl('stats-reset'), 'Statistics reset'),
     { class: 'link-btn', text: 'Reset', armedText: 'Tap again to reset' }));
   $('update-btn').addEventListener('click', () => act(() => ctl('update-lists', '--force', '--bg'), 'Updating all lists…'));
+  $('cache-btn').addEventListener('click', () => act(() => ctl('cache-clear'), 'DNS cache cleared'));
   $('refresh').addEventListener('change', (e) => act(() => ctl('set', 'refresh_hours', e.target.value), 'Refresh interval saved'));
   $('log-details').addEventListener('toggle', (e) => { if (e.target.open) refreshLog(); });
   $('log-refresh').addEventListener('click', refreshLog);

@@ -130,6 +130,16 @@ function check(name, ok, detail = '') {
         await page.waitForFunction(() => document.getElementById('toast').textContent === 'Statistics reset', null, { timeout: 15000 });
         await page.waitForFunction(() => /Queries\s*0/.test(document.getElementById('stats').textContent), null, { timeout: 15000 });
         check('stats reset to zero', true);
+        // The DNS cache tile shows the size now and the limit; clearing it
+        // empties it.
+        fs.writeFileSync(path.join(STATE, 'ub.cached'), '2000\n');
+        await page.waitForFunction(() => /Cached answers\s*2,000/.test(document.getElementById('stats').textContent), null, { timeout: 15000 });
+        check('cache size and limit shown', /DNS cache\s*2\.1 of 24 MB/.test(await page.textContent('#stats')), await page.textContent('#stats'));
+        await shot(page, 'cache-light', page.locator('#cache-btn'));
+        await page.click('#cache-btn');
+        await page.waitForFunction(() => document.getElementById('toast').textContent === 'DNS cache cleared', null, { timeout: 15000 });
+        await page.waitForFunction(() => /Cached answers\s*0/.test(document.getElementById('stats').textContent), null, { timeout: 15000 });
+        check('cache cleared from the WebUI', fs.readFileSync(path.join(STATE, 'ub.cached'), 'utf8').trim() === '0');
         check('custom url fields hidden for presets', !(await page.isVisible('#custom-url')));
         check('empty state shown', await page.isVisible('#sources-empty'));
 
@@ -296,6 +306,8 @@ function check(name, ok, detail = '') {
       await page.click('#back-link');
       await page.waitForSelector('#status-text');
       check(`no page errors (${scheme})`, errors.length === 0, errors.join('; '));
+      // The exec path waits for a frame before its first call.
+      await page.waitForFunction(() => window.__used.exec + window.__used.spawn > 0, null, { timeout: 10000 }).catch(() => {});
       const used = await page.evaluate(() => window.__used);
       if (scheme === 'light') {
         check('commands run through ksu.spawn when there is one', used.spawn > 0 && used.exec === 0, JSON.stringify(used));

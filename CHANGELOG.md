@@ -13,6 +13,11 @@ these notes.
   its forks), commands now run in the background and the page stays live;
   elsewhere the busy state is drawn before the command starts. Buttons and
   switches on the main page no longer take presses while something runs.
+- WebUI: a "Clear DNS cache" button (`ctl.sh cache-clear`), and the DNS
+  cache in the statistics: its size now out of its limit (e.g. "2.1 of 24
+  MB") and the number of cached answers, as Unbound reports them. The
+  memory tile, which was always Unbound's live memory use (cache,
+  blocklist and everything else), is now called "Memory in use".
 
 ## v1.26.2-r9
 
