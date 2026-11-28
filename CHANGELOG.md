@@ -3,7 +3,7 @@
 Notes for module revisions. Releases list the bundled versions on top of
 these notes.
 
-## Unreleased
+## v1.26.2-r9
 
 - New look: the WebUI follows Material Design 3 (Material You), in light
   and dark: top app bar with icon buttons, a status card coloured by state,
