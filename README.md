@@ -29,7 +29,8 @@ behind on security fixes.
     `custom.conf`. A change that keeps Unbound from starting is rolled back
     automatically.
 - **Least privilege:** Unbound runs chrooted in `/data/adb/unbound` as an
-  unprivileged user.
+  unprivileged user, in its own SELinux domain (`unbound_dns`) that only
+  allows what it needs: its folder, its sockets and the network.
 - **Works with captive portals and IPv6-only carriers:** Wi-Fi login pages
   and 464XLAT keep working.
 
@@ -80,6 +81,13 @@ deletes it and restores Private DNS.
 - **Use one DNS blocker at a time:** other DNS modules and VPN-based blockers
   conflict with this one.
 - **The clock must be roughly right.** DNSSEC fails with a badly wrong clock.
+- **SELinux:** the module's policy (`sepolicy.rule`) loads at boot, so the
+  domain is used from the first reboot after installing. Its rules were
+  written on KernelSU. If Unbound cannot start in it (another root manager,
+  a different Android), it starts in the root manager's domain as before and
+  the WebUI says why. If the domain blocks something, the WebUI says so too;
+  `ctl.sh selinux-report` lists what was blocked, and `ctl.sh selinux off`
+  runs Unbound as before (`selinux on` to go back).
 - **Mullvad isn't offered as a forwarder:** its public DNS closed on
   2 November 2026.
 

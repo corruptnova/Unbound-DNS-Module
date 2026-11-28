@@ -473,7 +473,7 @@ ctl stop >/dev/null; wait_for 10 daemon_gone
 mkdir -p "$SEFS"; : > "$SEFS/context"; : > "$STUB_STATE/calls.log"
 UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
 wait_for 10 jump_present
-assert_eq "policy loaded: learning" "learning" "$(se_state)"
+assert_eq "policy loaded: enforcing" "enforcing" "$(se_state)"
 assert_contains "binary labelled" "chcon u:object_r:unbound_dns_exec:s0 $MOD/bin/unbound" "$(cat "$STUB_STATE/calls.log")"
 # Written through another label first, so the kernel takes it afresh even
 # when the file already reads the same (BusyBox's chcon would skip it).
@@ -511,8 +511,21 @@ wait_for 15 jump_present && pass || fail "unbound runs after falling back"
 assert_eq "fallback reported" "fallback" "$(se_state)"
 assert_contains "fallback logged" "selinux: Unbound could not start in its own domain" "$(cat "$D/log/module.log")"
 assert_contains "reason kept" "can't set up security context" "$(ctl selinux-report)"
+assert_contains "reason in status (WebUI warning)" '"selinux_note":"runcon: can'"'"'t set up security context' "$(ctl status)"
 ctl stop >/dev/null; wait_for 10 daemon_gone
 rm -f "$STUB_STATE/runcon.fail"
+# Turned off: Unbound runs in the manager's domain; turned on again: its own.
+UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
+wait_for 10 jump_present
+assert_eq "domain in use" "enforcing" "$(se_state)"
+assert_contains "turn off" '"ok":true' "$(ctl selinux off)"
+se_is() { [ "$(se_state)" = "$1" ]; }
+wait_for 15 se_is off && pass || fail "selinux off: state $(se_state)"
+assert_eq "folder label back when off" "chcon -hR u:object_r:adb_data_file:s0 $D" "$(grep '^chcon' "$STUB_STATE/calls.log" | tail -n 1)"
+assert_contains "turn on" '"ok":true' "$(ctl selinux on)"
+wait_for 15 se_is enforcing && pass || fail "selinux on: state $(se_state)"
+assert_fails "selinux needs on|off" ctl selinux maybe
+ctl stop >/dev/null; wait_for 10 daemon_gone
 # Accesses logged for the domain are kept, each kind once, without pids.
 cat > "$STUB_STATE/dmesg.txt" <<'EOF'
 [   12.3] audit: type=1400 audit(1.2:3): avc:  denied  { read } for  pid=1234 comm="unbound" name="root.key" dev="dm-5" ino=42 scontext=u:r:unbound_dns:s0 tcontext=u:object_r:adb_data_file:s0 tclass=file permissive=1

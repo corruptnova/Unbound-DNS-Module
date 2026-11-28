@@ -118,15 +118,14 @@ private_dns_restore() {
 # answers on the control socket. Blocklist loading can take a while.
 # --- SELinux: Unbound in its own domain ------------------------------------------
 #
-# sepolicy.rule (loaded by the root manager at boot) defines unbound_dns and
-# the types of its binary and its folder. This build keeps the domain
-# permissive, the learning stage: nothing is blocked, and each kind of access
-# the rules do not allow is logged once, so the rules of an enforcing domain
-# can be written from real use. Without the policy (another root manager, or
-# before the reboot after installing) Unbound runs as before, in the manager's
-# domain, and its folder gets back the label all of /data/adb has.
+# sepolicy.rule (loaded by the root manager at boot) defines unbound_dns, an
+# enforcing domain, and the types of Unbound's binary and its folder. What the
+# domain blocks is collected for "ctl.sh selinux-report". Without the policy
+# (another root manager, or before the reboot after installing), or with the
+# domain turned off ("ctl.sh selinux off"), Unbound runs as before, in the
+# manager's domain, and its folder gets back the label all of /data/adb has.
 SE_DOMAIN=unbound_dns
-SE_MODE=learning
+SE_MODE=enforcing
 SE_DENIALS="$LOGDIR/selinux-denials.txt"
 SE_FS="${UNBOUND_SELINUXFS:-/sys/fs/selinux}"
 SE_DATA="u:object_r:${SE_DOMAIN}_data_file:s0"
@@ -155,6 +154,7 @@ se_known() {
 # reads the same.
 se_prepare() {
     [ -z "${UNBOUND_NO_SELINUX:-}" ] || return 1
+    [ "$(setting_get SELINUX 1)" = 1 ] || return 1
     command -v runcon >/dev/null 2>&1 || return 1
     se_known "$SE_DATA" "u:r:$SE_DOMAIN:s0" || return 1
     chcon u:object_r:system_file:s0 "$BIN/unbound" 2>/dev/null
@@ -181,10 +181,10 @@ se_round() {
     [ -s "$SE_DENIALS" ] || echo "$_sp" > "$SE_DENIALS"
 }
 
-# se_harvest: keep each kind of access logged for Unbound's domain, and by
-# other domains to Unbound or its files, without pids, inode numbers or
-# addresses. Permissive denials are logged once per kind and the kernel and
-# logcat buffers roll over, so they are collected while they last.
+# se_harvest: keep each kind of access denied to Unbound's domain, and to
+# other domains acting on Unbound or its files, without pids, inode numbers or
+# addresses. The kernel and logcat buffers roll over (and a permissive domain
+# logs each kind only once), so they are collected while they last.
 se_harvest() {
     se_round
     { dmesg 2>/dev/null; logcat -d -b all 2>/dev/null; } \
@@ -224,7 +224,9 @@ start_unbound() {
     fi
     se_unlabel
     _launch || return 1
-    if [ -f "$RUN/selinux.fallback" ]; then echo fallback; else echo unconfined; fi > "$RUN/selinux"
+    if [ -f "$RUN/selinux.fallback" ]; then echo fallback
+    elif [ "$(setting_get SELINUX 1)" = 0 ]; then echo off
+    else echo unconfined; fi > "$RUN/selinux"
 }
 
 # _launch [confined]: start Unbound in the foreground under us and wait until
@@ -470,10 +472,10 @@ daemon_main() {
             rotate_logs
             stats_bank
         fi
-        # Also right after a start, which logs the most new kinds of access.
+        # Also right after a start, when most of Unbound's accesses happen.
         if [ "$_maint" = 1 ] || [ "$_started" = 1 ]; then
             _sem=""; read -r _sem < "$RUN/selinux" 2>/dev/null
-            [ "$_sem" = learning ] && se_harvest
+            case "$_sem" in learning|enforcing) se_harvest ;; esac
         fi
 
         # Checked just before sleeping: a child that exited during this pass

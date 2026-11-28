@@ -58,6 +58,9 @@ const env = {
   UNBOUND_IF_INET6: path.join(tmp, 'if_inet6'),
   UNBOUND_APPLY_TIMEOUT: '10',
   UNBOUND_CA_BUNDLE: path.join(tmp, 'ca.pem'),
+  // No SELinux policy at first (Unbound in the manager's domain); the last
+  // step "loads" one whose domain fails, to show the fallback warning.
+  UNBOUND_SELINUXFS: path.join(tmp, 'selinuxfs'),
 };
 
 const executed = [];
@@ -266,6 +269,42 @@ function check(name, ok, detail = '') {
       await page.click('#back-link');
       await page.waitForSelector('#status-text');
       check(`no page errors (${scheme})`, errors.length === 0, errors.join('; '));
+      await page.close();
+    }
+
+    // SELinux: the module's policy is there but Unbound cannot start in its
+    // domain, so it runs in the manager's and the WebUI says why.
+    {
+      fs.mkdirSync(path.join(tmp, 'selinuxfs'), { recursive: true });
+      fs.writeFileSync(path.join(tmp, 'selinuxfs/context'), '');
+      fs.writeFileSync(path.join(STATE, 'selinux'), '');
+      fs.writeFileSync(path.join(STATE, 'runcon.fail'), '');
+      await run('sh /data/adb/modules/unbound-dns/ctl.sh restart');
+      const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      const errors = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      await page.exposeFunction('__run', run);
+      await page.addInitScript(() => {
+        window.ksu = {
+          exec(cmd, opts, cb) {
+            window.__run(cmd).then((r) => window[cb](r.errno, r.stdout, r.stderr));
+          },
+        };
+      });
+      await page.goto('file://' + path.join(MOD, 'webroot/index.html'));
+      let warned = true;
+      try {
+        await page.waitForFunction(() => document.getElementById('warnings').textContent.includes('could not start in its own SELinux domain'), null, { timeout: 30000 });
+      } catch { warned = false; }
+      check('selinux fallback warned', warned, await page.textContent('#warnings'));
+      check('selinux fallback reason shown', (await page.textContent('#warnings')).includes("can't set up security context"));
+      check('selinux tile says fell back', (await page.textContent('#stats')).includes("Manager's (fell back)"));
+      if (SHOTS) {
+        await page.evaluate(() => scrollTo(0, 0));
+        await page.waitForTimeout(400);
+        await page.screenshot({ path: path.join(SHOTS, 'selinux-fallback-light.png'), fullPage: true });
+      }
+      check('no page errors (selinux fallback)', errors.length === 0, errors.join('; '));
       await page.close();
     }
   } finally {

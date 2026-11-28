@@ -68,6 +68,6 @@ declared="$(awk '$1 == "type" { print $2 }' "$RULES")"
 for t in unbound_dns unbound_dns_exec unbound_dns_data_file; do
     assert_contains "type $t declared" "$t" "$declared"
 done
-assert_eq "the domain is permissive in the learning stage" "permissive unbound_dns" "$(grep '^permissive' "$RULES")"
+assert_eq "the domain is enforcing" "" "$(grep '^permissive' "$RULES")"
 
 done_testing

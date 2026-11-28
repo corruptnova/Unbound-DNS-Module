@@ -1,13 +1,14 @@
-# Unbound's own SELinux domain, learning stage (second round).
+# Unbound's own SELinux domain.
 #
 # The root manager loads this at boot. Unbound enters unbound_dns through its
 # binary, which the module labels unbound_dns_exec before every start, and its
 # folder (/data/adb/unbound) gets its own type, unbound_dns_data_file, so the
-# domain can be kept to those files rather than all of /data/adb (see
-# lib/daemon.sh). The domain is still permissive: nothing is blocked, and each
-# kind of access not allowed below is logged once ("ctl.sh selinux-report").
-# The rules below are what the first round logged; with them, the next round
-# logs only what is still missing.
+# domain is kept to those files rather than all of /data/adb (see
+# lib/daemon.sh). The domain is enforcing: Unbound may do what is allowed
+# below and nothing else. The rules come from running it in a permissive
+# domain and logging every access it made, through daily use, reboots, list
+# updates, settings changes and trust anchor updates. What is still blocked
+# is logged and shown by "ctl.sh selinux-report".
 #
 # A statement naming a type or permission this device does not have is
 # skipped, so types that only some devices have get statements of their own,
@@ -18,7 +19,6 @@ type unbound_dns domain
 type unbound_dns_exec { file_type exec_type }
 type unbound_dns_data_file { file_type data_file_type }
 typeattribute unbound_dns netdomain
-permissive unbound_dns
 allow unbound_dns_exec labeledfs filesystem associate
 allow unbound_dns_data_file labeledfs filesystem associate
 
