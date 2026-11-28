@@ -153,8 +153,10 @@ body.scrolled .top-bar { background: var(--md-surface-container); }
 .top-bar > .icon-btn:first-child { margin-left: -8px; }
 .top-bar > .icon-btn:last-child { margin-right: -8px; }
 
-/* Indeterminate linear progress under the app bar while something runs. */
+/* Indeterminate linear progress under the app bar while something runs;
+   nothing else can be pressed meanwhile (it would be ignored anyway). */
 body.busy { cursor: progress; }
+body.busy main :is(button, input, select, textarea, label, summary) { pointer-events: none; }
 body.busy .top-bar::after {
   content: "";
   position: absolute;

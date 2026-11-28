@@ -11,19 +11,86 @@ let cbSeq = 0;
 
 function shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
 
+// ksu.exec runs the command before it returns, and the page can neither
+// draw nor react meanwhile: a restart freezes it for seconds, and the busy
+// state set just before only shows at the end. ksu.spawn (KernelSU and its
+// forks) runs the command in the background and reports its output lines
+// and exit code as events, so the page stays live. Without spawn, the page
+// draws its busy state first and then calls exec.
 function exec(cmd) {
+  const ksu = window.ksu;
+  if (typeof ksu === 'undefined' || (typeof ksu.spawn !== 'function' && typeof ksu.exec !== 'function')) {
+    return Promise.reject(new Error('Open this page from the KernelSU manager.'));
+  }
+  if (typeof ksu.spawn !== 'function') return execBlocking(ksu, cmd);
+  // Fall back only when spawn could not start the command, never after.
+  return execSpawn(ksu, cmd).catch((e) => {
+    if (e && e.notStarted && typeof ksu.exec === 'function') return execBlocking(ksu, cmd);
+    throw e;
+  });
+}
+
+const SPAWN_LIMIT_MS = 15 * 60 * 1000;
+
+function execSpawn(ksu, cmd) {
   return new Promise((resolve, reject) => {
-    if (typeof window.ksu === 'undefined' || typeof window.ksu.exec !== 'function') {
-      reject(new Error('Open this page from the KernelSU manager.'));
-      return;
+    const name = `__unboundSp${Date.now()}_${cbSeq++}`;
+    const out = [];
+    const err = [];
+    let settled = false;
+    let timer;
+    const finish = (errno, extra) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      delete window[name];
+      resolve({ errno, stdout: out.join('\n'), stderr: err.join('\n') || extra || '' });
+    };
+    timer = setTimeout(() => finish(124, 'No answer from the command.'), SPAWN_LIMIT_MS);
+    window[name] = {
+      stdout: { emit: (ev, d) => { if (ev === 'data') out.push(String(d)); } },
+      stderr: { emit: (ev, d) => { if (ev === 'data') err.push(String(d)); } },
+      emit: (ev, arg) => {
+        if (ev === 'exit') finish(Number(arg));
+        // KernelSU follows a failed exit with "error"; one that comes on its
+        // own means the command could not run: give a late exit a moment.
+        else if (ev === 'error') {
+          setTimeout(() => finish((arg && arg.exitCode) || 1, String((arg && arg.message) || 'Command failed')), 500);
+        }
+      },
+    };
+    try {
+      ksu.spawn(cmd, '[]', '{}', name);
+    } catch (e) {
+      settled = true;
+      clearTimeout(timer);
+      delete window[name];
+      reject(Object.assign(new Error(String(e && e.message ? e.message : e)), { notStarted: true }));
     }
+  });
+}
+
+// Resolves once the page has drawn what is pending (or after 100 ms, when
+// it is not being drawn at all).
+function nextPaint() {
+  return new Promise((resolve) => {
+    let done = false;
+    const go = () => { if (!done) { done = true; resolve(); } };
+    requestAnimationFrame(() => requestAnimationFrame(go));
+    setTimeout(go, 100);
+  });
+}
+
+async function execBlocking(ksu, cmd) {
+  await nextPaint();
+  return new Promise((resolve, reject) => {
     const cb = `__unboundCb${Date.now()}_${cbSeq++}`;
     window[cb] = (errno, stdout, stderr) => {
       delete window[cb];
       resolve({ errno, stdout: stdout || '', stderr: stderr || '' });
     };
     try {
-      window.ksu.exec(cmd, '{}', cb);
+      ksu.exec(cmd, '{}', cb);
     } catch (e) {
       delete window[cb];
       reject(e);

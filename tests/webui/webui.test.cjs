@@ -88,13 +88,32 @@ function check(name, ok, detail = '') {
       const errors = [];
       page.on('pageerror', (e) => errors.push(e.message));
       await page.exposeFunction('__run', run);
-      await page.addInitScript(() => {
+      // Light: a manager with ksu.spawn, which runs the command in the
+      // background and reports it like KernelSU does (a "data" event per
+      // output line, then "exit", then "error" after a failure). Dark: one
+      // with only ksu.exec.
+      await page.addInitScript((withSpawn) => {
+        window.__used = { exec: 0, spawn: 0 };
         window.ksu = {
           exec(cmd, opts, cb) {
+            window.__used.exec++;
             window.__run(cmd).then((r) => window[cb](r.errno, r.stdout, r.stderr));
           },
         };
-      });
+        if (!withSpawn) return;
+        const lines = (t) => (t === '' ? [] : t.replace(/\n$/, '').split('\n'));
+        window.ksu.spawn = (cmd, args, opts, name) => {
+          window.__used.spawn++;
+          window.__run(cmd).then((r) => {
+            const ev = [];
+            lines(r.stdout).forEach((l) => ev.push((cp) => cp.stdout.emit('data', l)));
+            lines(r.stderr).forEach((l) => ev.push((cp) => cp.stderr.emit('data', l)));
+            ev.push((cp) => cp.emit('exit', r.errno));
+            if (r.errno !== 0) ev.push((cp) => { const e = new Error(r.stderr); e.exitCode = r.errno; cp.emit('error', e); });
+            ev.forEach((f, i) => setTimeout(() => { try { f(window[name]); } catch (e) { /* gone after exit, as on KernelSU */ } }, i));
+          });
+        };
+      }, scheme === 'light');
       await page.goto('file://' + path.join(MOD, 'webroot/index.html'));
 
       if (scheme === 'light') {
@@ -277,6 +296,30 @@ function check(name, ok, detail = '') {
       await page.click('#back-link');
       await page.waitForSelector('#status-text');
       check(`no page errors (${scheme})`, errors.length === 0, errors.join('; '));
+      const used = await page.evaluate(() => window.__used);
+      if (scheme === 'light') {
+        check('commands run through ksu.spawn when there is one', used.spawn > 0 && used.exec === 0, JSON.stringify(used));
+        // spawn that cannot start falls back to exec (once); spawn that only
+        // reports an error ends in a failure, not a hang.
+        const fb = await page.evaluate(async () => {
+          const orig = window.ksu.spawn;
+          const before = window.__used.exec;
+          window.ksu.spawn = () => { throw new Error('not here'); };
+          let ok;
+          try { ok = (await ctl('status')).includes('"running"'); } finally { window.ksu.spawn = orig; }
+          return { ok, execs: window.__used.exec - before };
+        });
+        check('spawn that cannot start falls back to exec', fb.ok && fb.execs === 1, JSON.stringify(fb));
+        const er = await page.evaluate(async () => {
+          const orig = window.ksu.spawn;
+          window.ksu.spawn = (cmd, args, opts, name) => {
+            setTimeout(() => { const e = new Error('cannot run'); e.exitCode = 127; window[name].emit('error', e); });
+          };
+          try { await ctl('status'); return 'resolved'; } catch (e) { return e.message; } finally { window.ksu.spawn = orig; }
+        });
+        check('spawn error without exit fails', er === 'cannot run', er);
+      }
+      else check('commands run through ksu.exec without spawn', used.exec > 0 && used.spawn === 0, JSON.stringify(used));
       await page.close();
     }
   } finally {

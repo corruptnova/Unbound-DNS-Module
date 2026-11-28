@@ -3,6 +3,17 @@
 Notes for module revisions. Releases list the bundled versions on top of
 these notes.
 
+## Unreleased
+
+- WebUI: no more freezing while a setting is applied. The page ran every
+  command through the root manager's `ksu.exec`, which holds the page until
+  the command ends, so applying settings (which restarts Unbound) froze it
+  for seconds and the "Applying…" window only flashed up at the end, which
+  invited pressing again. Where the manager has `ksu.spawn` (KernelSU and
+  its forks), commands now run in the background and the page stays live;
+  elsewhere the busy state is drawn before the command starts. Buttons and
+  switches on the main page no longer take presses while something runs.
+
 ## v1.26.2-r9
 
 - New look: the WebUI follows Material Design 3 (Material You), in light
