@@ -79,6 +79,8 @@ function renderStatus(s) {
     w.push(['warn', 'Private DNS is on in Android settings, so DNS bypasses Unbound. Set it to Off.']);
   if (s.redirect_active && s.ipv6 === 'unsupported')
     w.push(['warn', 'This kernel cannot redirect IPv6 DNS, so IPv6 DNS servers are used directly.']);
+  if (s.custom_refused)
+    w.push(['warn', `Your custom.conf is not used: it sets ${s.custom_refused.split(' ').join(', ')}, which the module keeps to hold Unbound chrooted, unprivileged and on this phone only. Remove those lines in Settings → Advanced.`]);
   if (s.blocked > 500000)
     w.push(['warn', `${nf.format(s.blocked)} blocked domains use a lot of memory (about ${Math.round(s.blocked * 0.4 / 1024)} MB). Consider fewer or smaller lists.`]);
   $('warnings').replaceChildren(...w.map(([k, m]) => el('p', { class: `notice ${k}` }, m)));

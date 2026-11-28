@@ -121,7 +121,7 @@
     <section class="card" aria-labelledby="adv-title">
       <details id="advanced">
         <summary><h2 id="adv-title">Advanced: custom.conf</h2></summary>
-        <p class="muted small">Your own Unbound settings, read after everything above. If Unbound rejects them, the previous file comes back.</p>
+        <p class="muted small">Your own Unbound settings, read after everything above. If Unbound rejects them, the previous file comes back. Where Unbound runs stays the module's: <code>username</code>, <code>chroot</code>, <code>directory</code>, <code>pidfile</code>, <code>logfile</code>, <code>do-daemonize</code>, <code>port</code>, <code>interface</code>, <code>include</code> and <code>remote-control</code> are refused.</p>
         <textarea id="custom-conf" rows="12" spellcheck="false" autocapitalize="off" class="mono"></textarea>
         <div class="row gap wrap">
           <button type="button" class="btn" id="custom-save">Save custom.conf</button>

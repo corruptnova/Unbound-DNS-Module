@@ -66,6 +66,15 @@ fi
 render
 if [ -n "$CHECK" ]; then
     assert_ok "unbound-checkconf" "$CHECK" "$T/unbound.conf"
+    # The settings at the end of unbound.conf win over custom.conf, so even a
+    # custom.conf the module's check missed cannot undo where Unbound runs.
+    cp "$T/custom.conf" "$T/custom.conf.keep"
+    printf 'server:\n    username: "root"\n    pidfile: "%s/x.pid"\n    do-daemonize: yes\n    port: 53\n' "$T" >> "$T/custom.conf"
+    assert_eq "user kept over custom.conf" "$UB_USER" "$("$CHECK" -o username "$T/unbound.conf")"
+    assert_eq "no pidfile over custom.conf" "" "$("$CHECK" -o pidfile "$T/unbound.conf")"
+    assert_eq "no daemonizing over custom.conf" "no" "$("$CHECK" -o do-daemonize "$T/unbound.conf")"
+    assert_eq "port kept over custom.conf" "$PORT" "$("$CHECK" -o port "$T/unbound.conf")"
+    mv -f "$T/custom.conf.keep" "$T/custom.conf"
 fi
 
 if [ -n "$UB_USER" ]; then

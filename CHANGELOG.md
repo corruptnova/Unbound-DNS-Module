@@ -15,6 +15,16 @@ these notes.
   `unbound-anchor` now runs as an unprivileged user with only network
   access, like list downloads, in a folder of its own; the module reads its
   result back with that user's rights (refusing links) before installing it.
+- Security: `custom.conf` can no longer undo where Unbound runs. Desktop
+  guides often set `username: ""` or `chroot: ""`; with those, Unbound kept
+  root and the whole filesystem, and the only check was that it still
+  started. A `custom.conf` that sets `username`, `chroot`, `directory`,
+  `pidfile`, `logfile` (files Unbound would open as root), `do-daemonize`,
+  `port`, `interface` (Unbound allows every source, safe only on loopback),
+  `include` or `remote-control` is now refused when saved, and left out with
+  a warning in the WebUI when edited by hand. The module's own values for
+  these are also set again after `custom.conf`. If your `custom.conf` has
+  such lines, remove them; until then it is not used.
 - Fix: a blocklist update started from the WebUI ran inside the root
   manager app's cgroups, so Android killed or froze it along with the app;
   its lock then stayed, and once Android reused its process id for another

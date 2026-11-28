@@ -105,8 +105,9 @@ status_json() {
     printf '"blocked":%s,"updating":%s,"last_update":%s,"last_update_ok":%s,' \
         "$(json_num "$(cat "$BLOCK_COUNT" 2>/dev/null)")" "$(locked update && echo true || echo false)" \
         "$(json_num "$(setting_get LAST_UPDATE 0)")" "$(json_bool "$(setting_get LAST_UPDATE_OK 1)")"
-    printf '"refresh_hours":%s,"error":"%s"}\n' \
-        "$(json_num "$(setting_get REFRESH_HOURS 24)")" "$(json_esc "$_err")"
+    printf '"refresh_hours":%s,"custom_refused":"%s","error":"%s"}\n' \
+        "$(json_num "$(setting_get REFRESH_HOURS 24)")" \
+        "$(json_esc "$(cat "$RUN/custom.refused" 2>/dev/null)")" "$(json_esc "$_err")"
 }
 
 lists_json() {
@@ -296,6 +297,11 @@ cmd_custom_set() {
     [ "$(wc -c < "$RUN/custom.new")" -le 65536 ] || die "custom.conf is too large (64 KB at most)"
     [ "$(tr -d '\000' < "$RUN/custom.new" | wc -c)" = "$(wc -c < "$RUN/custom.new")" ] \
         || die "custom.conf must be text"
+    _cl="$(custom_locked "$RUN/custom.new")"
+    if [ -n "$_cl" ]; then
+        rm -f "$RUN/custom.new"
+        die "custom.conf may not set $(printf '%s' "$_cl" | sed 's/ /, /g'): the module sets these to keep Unbound chrooted, unprivileged and on this phone only"
+    fi
     run_locked apply 120 _do_custom_set
 }
 

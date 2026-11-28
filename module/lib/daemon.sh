@@ -22,6 +22,55 @@ write_runtime_conf() {
     } > "$DATA/runtime.conf"
 }
 
+# --- custom.conf ------------------------------------------------------------------
+# Options custom.conf may not set: they would undo the chroot or the switch
+# to the inet user (username, chroot, directory), make Unbound open files as
+# root before it switches (pidfile, logfile, include), take it away from the
+# supervisor (do-daemonize), or move it off loopback port 5335, where every
+# source is allowed (port, interface, remote-control). unbound.conf also
+# sets the scalar ones again after custom.conf.
+CUSTOM_LOCKED="username chroot directory pidfile logfile do-daemonize port interface interface-automatic interface-automatic-ports include include-toplevel remote-control"
+
+# custom_locked FILE: the locked options FILE sets, space-separated; nothing
+# when there are none. Comments and quoted text do not count.
+custom_locked() {
+    LC_ALL=C awk -v locked="$CUSTOM_LOCKED" '
+        BEGIN { n = split(locked, a, " "); for (i = 1; i <= n; i++) lk[a[i]] = 1 }
+        {
+            s = ""; q = ""
+            for (i = 1; i <= length($0); i++) {
+                c = substr($0, i, 1)
+                if (q != "") { if (c == q) { q = ""; s = s c } else s = s " "; continue }
+                if (c == "\"" || c == "\047") q = c
+                else if (c == "#") break
+                s = s c
+            }
+            s = tolower(s)
+            while (match(s, /(^|[^a-z0-9_-])[a-z][a-z0-9-]*[ \t]*:/)) {
+                w = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
+                sub(/^[^a-z]*/, "", w); sub(/[ \t]*:$/, "", w)
+                if ((w in lk) && !(w in seen)) { seen[w] = 1; out = out (out == "" ? "" : " ") w }
+            }
+        }
+        END { printf "%s", out }' "$1" 2>/dev/null
+}
+
+# write_main_conf: unbound.conf from the module, without custom.conf when it
+# sets a locked option ($RUN/custom.refused says which, for status).
+write_main_conf() {
+    cp -f "$MODDIR/conf/unbound.conf" "$CONF"
+    _cl="$(custom_locked "$DATA/custom.conf")"
+    if [ -n "$_cl" ]; then
+        sed -i '/^include: "[^"]*\/custom\.conf"$/d' "$CONF"
+        if [ "$(cat "$RUN/custom.refused" 2>/dev/null)" != "$_cl" ]; then
+            log "custom.conf: not used, it sets $_cl (the module's)"
+        fi
+        printf '%s\n' "$_cl" > "$RUN/custom.refused"
+    else
+        rm -f "$RUN/custom.refused"
+    fi
+}
+
 # setup_data: create the data/chroot directory and refresh shipped config.
 # Safe to run any number of times; never touches user files.
 setup_data() {
@@ -31,7 +80,7 @@ setup_data() {
     chown "$UB_UID:$UB_UID" "$VAR" 2>/dev/null
     chmod 0750 "$VAR"
     migrate_var
-    cp -f "$MODDIR/conf/unbound.conf" "$CONF"
+    write_main_conf
     cp -f "$MODDIR/conf/control.conf" "$CTRL_CONF"
     [ -f "$DATA/custom.conf" ] || cp "$MODDIR/conf/custom.conf" "$DATA/custom.conf"
     [ -n "$(ub_read root.key 2>/dev/null)" ] || install_root_key "$MODDIR/conf/root.key"
@@ -117,6 +166,8 @@ private_dns_restore() {
 # start_unbound: launch in the foreground mode under us and wait until it
 # answers on the control socket. Blocklist loading can take a while.
 start_unbound() {
+    # custom.conf may have been edited by hand since the last start.
+    write_main_conf
     # Unbound logs to stderr (see unbound.conf). Only what this start wrote
     # is looked at when it fails.
     : >> "$UBLOG"

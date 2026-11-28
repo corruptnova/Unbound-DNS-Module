@@ -60,7 +60,13 @@ need a WebUI host app such as KsuWebUI or MMRL.
   ```
 
 - **Your own Unbound settings:** edit them in Settings → Advanced, or in
-  `/data/adb/unbound/custom.conf` followed by `ctl.sh restart`.
+  `/data/adb/unbound/custom.conf` followed by `ctl.sh restart`. Where
+  Unbound runs stays the module's: a `custom.conf` that sets `username`,
+  `chroot`, `directory`, `pidfile`, `logfile`, `do-daemonize`, `port`,
+  `interface`, `include` or `remote-control` is refused, or, if edited by
+  hand, not used (the WebUI says so). These would undo the chroot or the
+  unprivileged user, let Unbound write files as root, or put it on the
+  network, where it answers everyone.
 - **Local lists:** drop files into `/data/adb/unbound/lists/local/`, then run
   `ctl.sh rebuild`.
 

@@ -101,7 +101,8 @@ async function busy(text, fn) {
 
 // Run a ctl.sh action that answers with {ok, ...} behind the busy overlay,
 // re-read the settings before the overlay goes away (so nothing the user
-// types afterwards gets overwritten), then report the result.
+// types afterwards gets overwritten), then report the result: true, false
+// (tried and failed, e.g. rolled back) or 'refused' (nothing was changed).
 async function act(text, args, okText) {
   $('apply-error').hidden = true;
   let r;
@@ -114,8 +115,8 @@ async function act(text, args, okText) {
       }
     });
   } catch (e) {
-    showError(e.message);
-    return false;
+    showError(e.message.replace(/^error: /, ''));
+    return 'refused';
   }
   if (r === undefined) return false;
   if (r.ok) toast(typeof okText === 'function' ? okText(r) : okText);
@@ -141,9 +142,11 @@ async function loadCustom() {
 async function saveCustom() {
   const text = $('custom-conf').value || '\n';
   const b64 = btoa(unescape(encodeURIComponent(text)));
-  await act('Saving custom.conf… Unbound is restarting', ['custom-set', b64],
+  const r = await act('Saving custom.conf… Unbound is restarting', ['custom-set', b64],
     (r) => (r.applied ? 'custom.conf applied' : 'custom.conf saved'));
-  await loadCustom(); // after a failure this shows the restored file
+  // After a rollback this shows the restored file; a refused draft stays
+  // in the editor, to be corrected.
+  if (r !== 'refused') await loadCustom();
 }
 
 function init() {

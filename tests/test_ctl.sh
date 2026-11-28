@@ -358,6 +358,44 @@ assert_contains "broken custom.conf rejected" '"ok":false' "$out"
 assert_eq "custom.conf restored" "$(cat "$TMP/custom.txt")" "$(cat "$D/custom.conf")"
 assert_fails "custom-set rejects bad encoding" ctl custom-set 'not base64!'
 
+# custom.conf may not undo where Unbound runs: refused on save, with the
+# options named; comments and quoted text do not count.
+b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+for bad in 'server:\n    username: ""\n' 'server: chroot: ""\n' 'server:\n    PIDFILE : "/data/x"\n' \
+        'server:interface:0.0.0.0\n' 'include: "/data/adb/x.conf"\n' 'remote-control:\n    control-interface: 0.0.0.0\n'; do
+    _txt="$(printf "$bad")"
+    out="$(ctl custom-set "$(b64 "$_txt")" 2>&1)"
+    assert_contains "refused: $(printf '%s' "$_txt" | tr '\n' ' ')" "may not set" "$out"
+done
+assert_contains "refusal names the options" "may not set username, chroot:" \
+    "$(ctl custom-set "$(b64 'server:
+    username: ""
+    chroot: ""')" 2>&1)"
+assert_eq "custom.conf unchanged after refusals" "$(cat "$TMP/custom.txt")" "$(cat "$D/custom.conf")"
+_ok='# username: "" here is only a comment
+server:
+    local-data: "x.example. TXT '"'include: y'"'"'
+    local-data: '"'y.example. TXT \"chroot: z\"'"'
+    private-address: 10.0.0.0/8   # pidfile: in a comment'
+assert_contains "comments and quoted text are fine" '"applied":true' "$(ctl custom-set "$(b64 "$_ok")")"
+# The module's own settings come after custom.conf in unbound.conf.
+assert_eq "custom.conf read before where Unbound runs" \
+    'include: "/data/adb/unbound/custom.conf"' \
+    "$(grep -n 'custom.conf"$\|^    username: "inet"$' "$D/unbound.conf" | sort -n | head -n 1 | cut -d: -f2-)"
+# Edited by hand to set one: not used at the next start, and status says so.
+printf 'server:\n    username: ""\n' >> "$D/custom.conf"
+ctl restart >/dev/null
+custom_refused() { ctl status | grep -q '"custom_refused":"username"'; }
+wait_for 15 custom_refused && pass || fail "hand-edited custom.conf refused: $(ctl status)"
+assert_eq "hand-edited custom.conf left out" "" "$(grep '^include: .*custom\.conf"$' "$D/unbound.conf")"
+assert_contains "refusal logged" "custom.conf: not used, it sets username" "$(cat "$D/log/module.log")"
+wait_for 10 jump_present && pass || fail "Unbound runs without the refused custom.conf"
+sed -i '/username: ""/d' "$D/custom.conf"
+ctl restart >/dev/null
+custom_used() { grep -q '^include: .*custom\.conf"$' "$D/unbound.conf" && ctl status | grep -q '"running":true,.*"custom_refused":""'; }
+wait_for 15 custom_used && pass || fail "custom.conf used again once fixed"
+wait_for 10 jump_present && pass || fail "redirect back after custom.conf fixed"
+
 # --- trust anchor -----------------------------------------------------------------------
 assert_contains "anchor up to date" '"changed":false' "$(ctl anchor-update)"
 touch "$STUB_STATE/anchor.fail"

@@ -242,6 +242,17 @@ function check(name, ok, detail = '') {
         check('broken custom.conf rolled back', (await page.textContent('#apply-error')).includes('previous settings are back'));
         check('custom.conf file restored', fs.readFileSync(path.join(data, 'custom.conf'), 'utf8') === customBefore);
 
+        // A desktop guide's settings that undo the sandbox: refused, file
+        // untouched, and the draft stays in the editor to be corrected.
+        const draft = 'server:\n    username: ""\n    chroot: ""\n';
+        await page.fill('#custom-conf', draft);
+        await page.click('#custom-save');
+        await page.waitForFunction(() => document.getElementById('apply-error').textContent.includes('may not set'), null, { timeout: 20000 });
+        check('sandbox options refused', (await page.textContent('#apply-error')).includes('username, chroot'));
+        check('refused custom.conf not written', fs.readFileSync(path.join(data, 'custom.conf'), 'utf8') === customBefore);
+        check('refused draft kept in the editor', (await page.inputValue('#custom-conf')) === draft);
+        await shot(page, `custom-refused-${scheme}`, page.locator('#apply-error'));
+
         await clearToast();
         await page.click('#anchor-update');
         await page.waitForFunction(() => document.getElementById('toast').textContent.includes('up to date'), null, { timeout: 20000 });
