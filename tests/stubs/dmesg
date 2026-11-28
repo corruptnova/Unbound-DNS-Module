@@ -1,4 +1,0 @@
-#!/bin/sh
-# Fake dmesg: prints $STUB_STATE/dmesg.txt.
-cat "$STUB_STATE/dmesg.txt" 2>/dev/null
-exit 0

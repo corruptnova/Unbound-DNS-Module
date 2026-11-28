@@ -50,8 +50,6 @@ usage: ctl.sh <command> [args]
                              refresh the DNSSEC root trust anchor / restore
                              the built-in one
   log [module|unbound] [N]   last N log lines (default 200)
-  selinux-report             Unbound's SELinux domain and what it blocked
-  selinux on|off             run Unbound in its own SELinux domain (default) or the manager's
   diag                       troubleshooting report (paste it into a bug report)
   stats-reset                start the query statistics from zero
 
@@ -98,11 +96,6 @@ status_json() {
     printf '"nat64_bypass_v4":"%s","nat64_bypass_v6":"%s",' \
         "$(json_esc "$(cat "$RUN/nat64.iptables" 2>/dev/null)")" \
         "$(json_esc "$(cat "$RUN/nat64.ip6tables" 2>/dev/null)")"
-    _se=""; [ "$_run" = 1 ] && _se="$(cat "$RUN/selinux" 2>/dev/null)"
-    _sen=""; [ "$_se" = fallback ] && _sen="$(cat "$RUN/selinux.fallback" 2>/dev/null)"
-    _seb=0; [ "$_se" = enforcing ] && _seb="$(grep -c 'avc:' "$SE_DENIALS" 2>/dev/null)"
-    printf '"selinux":"%s","selinux_note":"%s","selinux_blocked":%s,' \
-        "$(json_esc "$_se")" "$(json_esc "$_sen")" "$(json_num "$_seb")"
     printf '"private_dns":"%s","version":"%s","module_version":"%s",' \
         "$(json_esc "$_pd")" "$(json_esc "$(unbound_version)")" "$(json_esc "$(module_version)")"
     # Saved totals plus what Unbound counted since the last snapshot.
@@ -406,56 +399,8 @@ cmd_diag() {
     fi
     _sec "module log (last 40)"
     tail -n 40 "$MODLOG" 2>/dev/null
-    _sec "SELinux"
-    cmd_selinux_report
     _sec "unbound log (last 40)"
     tail -n 40 "$UBLOG" 2>/dev/null
-}
-
-# selinux-report: Unbound's SELinux domain and every kind of access denied
-# to it since this version of the policy was installed.
-cmd_selinux_report() {
-    se_harvest
-    _ctx="not running"
-    if unbound_running; then
-        _ctx="$(tr -d '\000' < "/proc/$(unbound_pid)/attr/current" 2>/dev/null)"
-        [ -n "$_ctx" ] || _ctx="unknown"
-    fi
-    _st="$(cat "$RUN/selinux" 2>/dev/null)"
-    _lbl="$(ls -Zd "$DATA" 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^u:object_r:/) { print $i; exit } }')"
-    echo "state: ${_st:-unknown}; Unbound's context: $_ctx; its folder: ${_lbl:-unknown}"
-    if [ -s "$RUN/selinux.fallback" ]; then
-        echo "fell back because: $(cat "$RUN/selinux.fallback")"
-    fi
-    _n=0; [ -f "$SE_DENIALS" ] && _n="$(grep -c 'avc:' "$SE_DENIALS")"
-    if [ "$_st" = learning ]; then
-        echo "kinds of access logged for unbound_dns: $_n"
-    else
-        echo "kinds of access blocked for unbound_dns: $_n"
-    fi
-    # The kernel drops audit messages beyond a few per second, so a denial
-    # can be missing from the list.
-    _lost="$(dmesg 2>/dev/null | grep -o 'audit_lost=[0-9]*' | tail -n 1)"
-    [ -n "$_lost" ] && echo "audit messages the kernel dropped since boot (all apps): ${_lost#audit_lost=}"
-    cat "$SE_DENIALS" 2>/dev/null
-}
-
-# selinux on|off: run Unbound in its own domain (the default) or, if something
-# it needs is blocked, in the root manager's domain as before. Restarts it.
-cmd_selinux() {
-    case "${1:-}" in
-        on) setting_set SELINUX 1 ;;
-        off) setting_set SELINUX 0 ;;
-        *) die "usage: selinux on|off" ;;
-    esac
-    rm -f "$RUN/selinux.fallback"
-    log "selinux: own domain $1"
-    if daemon_running; then
-        touch "$RUN/restart"
-        stop_unbound
-        wake_daemon
-    fi
-    printf '{"ok":true}\n'
 }
 
 cmd_redirect() {
@@ -593,8 +538,6 @@ case "$cmd" in
         cmd_stop >/dev/null
         private_dns_restore ;;
     diag) cmd_diag ;;
-    selinux-report) cmd_selinux_report ;;
-    selinux) cmd_selinux "${1:-}" ;;
     stats-reset) stats_reset && printf '{"ok":true}\n' ;;
     settings) settings_json ;;
     settings-apply) cmd_settings_apply "$@" ;;

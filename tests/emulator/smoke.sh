@@ -111,21 +111,6 @@ sh_dev "[ -S /data/adb/unbound/run/unbound.sock ] && echo yes" | grep -q yes \
     && ok "control socket in the root-only run/ folder" || bad "no control socket in run/"
 sh_dev "grep -q 'start of service' /data/adb/unbound/log/unbound.log && echo yes" | grep -q yes \
     && ok "Unbound's log saved in log/" || bad "Unbound's log missing from log/"
-# No root manager loads the module's SELinux policy here, so Unbound must run
-# exactly as before, and say so.
-ctl status | grep -q '"selinux":"unconfined"' && ok "without the module policy Unbound runs as before" \
-    || bad "selinux state: $(ctl status | grep -o '"selinux":"[a-z]*"')"
-# Read the whole report: with pipefail, grep -q stopping early fails the pipe.
-case "$(ctl selinux-report)" in
-    "state: unconfined"*) ok "selinux-report works" ;;
-    *) bad "selinux-report: $(ctl selinux-report | head -n 1)" ;;
-esac
-# The module starts Unbound with "runcon -- CONTEXT PROG ARGS" ("--" for
-# BusyBox's runcon); Android's toybox runcon must take that form too.
-_ctx="$(sh_dev 'id -Z')"
-_got="$(sh_dev "runcon -- $_ctx /system/bin/id -Z 2>&1")"
-[ -n "$_ctx" ] && [ "$_got" = "$_ctx" ] && ok "toybox runcon accepts the module's form" \
-    || bad "toybox runcon -- $_ctx: $_got"
 
 say "resolution goes through Unbound"
 q0="$(ctl status | sed -n 's/.*"queries":\([0-9]*\).*/\1/p')"

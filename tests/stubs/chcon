@@ -1,5 +1,0 @@
-#!/bin/sh
-# Fake chcon: succeeds only when the module's policy is "loaded"
-# ($STUB_STATE/selinux exists), like labelling with a type the policy has.
-echo "chcon $*" >> "$STUB_STATE/calls.log"
-[ -f "$STUB_STATE/selinux" ] || { echo "chcon: $2: Invalid argument" >&2; exit 1; }

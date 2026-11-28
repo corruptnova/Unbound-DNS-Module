@@ -116,133 +116,12 @@ private_dns_restore() {
 
 # start_unbound: launch in the foreground mode under us and wait until it
 # answers on the control socket. Blocklist loading can take a while.
-# --- SELinux: Unbound in its own domain ------------------------------------------
-#
-# sepolicy.rule (loaded by the root manager at boot) defines unbound_dns, an
-# enforcing domain, and the types of Unbound's binary and its folder. What the
-# domain blocks is collected for "ctl.sh selinux-report". Without the policy
-# (another root manager, or before the reboot after installing), or with the
-# domain turned off ("ctl.sh selinux off"), Unbound runs as before, in the
-# manager's domain, and its folder gets back the label all of /data/adb has.
-SE_DOMAIN=unbound_dns
-SE_MODE=enforcing
-SE_DENIALS="$LOGDIR/selinux-denials.txt"
-SE_FS="${UNBOUND_SELINUXFS:-/sys/fs/selinux}"
-SE_DATA="u:object_r:${SE_DOMAIN}_data_file:s0"
-SE_DATA_PLAIN="u:object_r:adb_data_file:s0"
-SE_LABELLED="$DATA/selinux.labelled"
-
-# se_known CONTEXT...: the loaded policy knows each context. The kernel checks
-# a context written to selinuxfs; chcon is no test, as root may set unknown
-# labels.
-se_known() {
-    [ -e "$SE_FS/context" ] || return 1
-    for _c in "$@"; do
-        printf '%s' "$_c" | cat 1<> "$SE_FS/context" 2>/dev/null || return 1
-    done
-}
-
-# se_prepare: label the Unbound binary so it can enter its domain, and its
-# folder so the domain can be kept to it. Fails when the policy does not have
-# them (not loaded) or there is no runcon. New files in the folder take its
-# label. -h: never follow a symbolic link (Unbound's user can write var/).
-#
-# Each label is written twice, through another one. A file the kernel looked
-# at before the root manager added the module's types at boot (the label is
-# still there from the boot before) stays "unlabeled" to the kernel until its
-# label is written again, and BusyBox's chcon skips a file whose label already
-# reads the same.
-se_prepare() {
-    [ -z "${UNBOUND_NO_SELINUX:-}" ] || return 1
-    [ "$(setting_get SELINUX 1)" = 1 ] || return 1
-    command -v runcon >/dev/null 2>&1 || return 1
-    se_known "$SE_DATA" "u:r:$SE_DOMAIN:s0" || return 1
-    chcon u:object_r:system_file:s0 "$BIN/unbound" 2>/dev/null
-    chcon "u:object_r:${SE_DOMAIN}_exec:s0" "$BIN/unbound" 2>/dev/null || return 1
-    : > "$SE_LABELLED"
-    chcon -hR "$SE_DATA_PLAIN" "$DATA" 2>/dev/null
-    chcon -hR "$SE_DATA" "$DATA" 2>/dev/null
-}
-
-# se_unlabel: Unbound runs in the manager's domain, so its folder needs no
-# label of its own; without the module's policy that label would mean nothing.
-se_unlabel() {
-    [ -f "$SE_LABELLED" ] || return 0
-    chcon -hR "$SE_DATA_PLAIN" "$DATA" 2>/dev/null && rm -f "$SE_LABELLED"
-}
-
-# se_round: denials are kept per version of the policy: a new one allows
-# more, so the list from the one before moves to selinux-denials.txt.old.
-se_round() {
-    _sp="# policy $(cksum < "$MODDIR/sepolicy.rule" 2>/dev/null | cut -d' ' -f1)"
-    if [ -s "$SE_DENIALS" ] && [ "$(head -n 1 "$SE_DENIALS")" != "$_sp" ]; then
-        mv -f "$SE_DENIALS" "$SE_DENIALS.old"
-    fi
-    [ -s "$SE_DENIALS" ] || echo "$_sp" > "$SE_DENIALS"
-}
-
-# se_harvest: keep each kind of access denied to Unbound's domain, and to
-# other domains acting on Unbound or its files, without pids, inode numbers or
-# addresses. The kernel and logcat buffers roll over (and a permissive domain
-# logs each kind only once), so they are collected while they last.
-se_harvest() {
-    se_round
-    { dmesg 2>/dev/null; logcat -d -b all 2>/dev/null; } \
-        | grep -F -e "scontext=u:r:$SE_DOMAIN:" -e "tcontext=u:r:$SE_DOMAIN:" -e "tcontext=u:object_r:${SE_DOMAIN}_" \
-        | LC_ALL=C awk -v known="$SE_DENIALS" '
-            function key(s,    p, a, b, c) {
-                p = s; sub(/^.*denied +\{ */, "", p); sub(/ *\}.*/, "", p)
-                a = s; sub(/^.*scontext=/, "", a); sub(/ .*/, "", a)
-                b = s; sub(/^.*tcontext=/, "", b); sub(/ .*/, "", b)
-                c = s; sub(/^.*tclass=/, "", c); sub(/ .*/, "", c)
-                return p "|" a "|" b "|" c
-            }
-            BEGIN { while ((getline l < known) > 0) seen[key(l)] = 1 }
-            /avc: +denied/ {
-                s = $0
-                sub(/^.*avc: +/, "avc: ", s)
-                gsub(/ (pid|ino|dev|ioctlcmd|faddr|fport|daddr|dest|saddr|rport|laddr)=[^ ]*/, "", s)
-                gsub(/  +/, " ", s)
-                k = key(s)
-                if (!(k in seen)) { seen[k] = 1; print s }
-            }' >> "$SE_DENIALS"
-}
-
-# start_unbound: in its own SELinux domain when the policy is there. If it
-# cannot start that way but starts the old way, the domain is the problem:
-# keep it out of the domain until the supervisor restarts, and say why.
 start_unbound() {
-    : >> "$UBLOG"
-    if [ ! -f "$RUN/selinux.fallback" ] && se_prepare; then
-        if _launch confined; then echo "$SE_MODE" > "$RUN/selinux"; return 0; fi
-        _se_err="$(cat "$RUN/start_error" 2>/dev/null)"
-        _launch || return 1
-        printf '%s\n' "${_se_err:-unknown}" > "$RUN/selinux.fallback"
-        echo fallback > "$RUN/selinux"
-        log "selinux: Unbound could not start in its own domain (${_se_err:-unknown}); running it in the root manager's domain until the supervisor restarts"
-        return 0
-    fi
-    se_unlabel
-    _launch || return 1
-    if [ -f "$RUN/selinux.fallback" ]; then echo fallback
-    elif [ "$(setting_get SELINUX 1)" = 0 ]; then echo off
-    else echo unconfined; fi > "$RUN/selinux"
-}
-
-# _launch [confined]: start Unbound in the foreground under us and wait until
-# it answers on the control socket. Blocklist loading can take a while.
-_launch() {
     # Unbound logs to stderr (see unbound.conf). Only what this start wrote
     # is looked at when it fails.
+    : >> "$UBLOG"
     _mark=$(( $(wc -c < "$UBLOG") + 1 ))
-    if [ "${1:-}" = confined ]; then
-        # "--" first: BusyBox's runcon (the one root managers' scripts get)
-        # reads options after PROG too and would take Unbound's -d and -c;
-        # toybox's skips the "--".
-        runcon -- "u:r:$SE_DOMAIN:s0" "$BIN/unbound" -d -c "$CONF" >> "$UBLOG" 2>&1 &
-    else
-        "$BIN/unbound" -d -c "$CONF" >> "$UBLOG" 2>&1 &
-    fi
+    "$BIN/unbound" -d -c "$CONF" >> "$UBLOG" 2>&1 &
     _ub=$!
     echo "$_ub" > "$RUN/unbound.pid"
     _t=0
@@ -395,11 +274,22 @@ watch_start() {
     _watch=$!
 }
 
+# The SELinux test builds (never released) gave this folder an SELinux type
+# of its own, which means nothing without their policy, and kept a log of
+# denials. Give it back the label all of /data/adb has.
+selinux_test_cleanup() {
+    if [ -f "$DATA/selinux.labelled" ]; then
+        chcon -hR u:object_r:adb_data_file:s0 "$DATA" 2>/dev/null && rm -f "$DATA/selinux.labelled"
+    fi
+    rm -f "$LOGDIR/selinux-denials.txt" "$LOGDIR/selinux-denials.txt.old" "$RUN/selinux" "$RUN/selinux.fallback"
+}
+
 daemon_main() {
     setup_data
     if daemon_running; then echo "daemon already running" >&2; return 0; fi
     echo $$ > "$RUN/daemon.pid"
-    rm -f "$RUN/stop" "$RUN/selinux.fallback"
+    rm -f "$RUN/stop"
+    selinux_test_cleanup
     _stop=0
     trap '_stop=1' TERM INT
     trap ':' USR1                       # "something changed": look now
@@ -418,7 +308,7 @@ daemon_main() {
     uptime_now; _next_maint="$_now"
     while [ "$_stop" = 0 ] && [ ! -f "$RUN/stop" ] && ! module_off; do
         uptime_now
-        _maint=0; _started=0
+        _maint=0
         if [ "$_now" -ge "$_next_maint" ]; then
             _maint=1; _next_maint=$((_now + _maint_every))
         fi
@@ -437,7 +327,7 @@ daemon_main() {
             if [ "$_now" -ge "$_next_try" ]; then
                 if start_unbound; then
                     read -r _child < "$RUN/unbound.pid"
-                    _backoff=5; _started=1
+                    _backoff=5
                 else
                     uptime_now
                     _next_try=$((_now + _backoff))
@@ -471,11 +361,6 @@ daemon_main() {
         if [ "$_maint" = 1 ]; then
             rotate_logs
             stats_bank
-        fi
-        # Also right after a start, when most of Unbound's accesses happen.
-        if [ "$_maint" = 1 ] || [ "$_started" = 1 ]; then
-            _sem=""; read -r _sem < "$RUN/selinux" 2>/dev/null
-            case "$_sem" in learning|enforcing) se_harvest ;; esac
         fi
 
         # Checked just before sleeping: a child that exited during this pass

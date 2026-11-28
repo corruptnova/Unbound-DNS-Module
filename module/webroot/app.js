@@ -67,10 +67,6 @@ function renderStatus(s) {
       ['IPv6 DNS', !s.redirect_active ? '—'
         : ({ ok: 'Redirected', unsupported: 'Not redirected' }[s.ipv6] || '—')],
       ['Unbound', s.version || '—'],
-      ['SELinux', {
-        learning: 'Own domain (learning)', enforcing: 'Own domain',
-        fallback: 'Manager\'s (fell back)', unconfined: 'Manager\'s', off: 'Manager\'s (turned off)',
-      }[s.selinux] || '—'],
     ].map(([k, v]) => el('div', {}, el('dt', {}, k), el('dd', {}, v))),
   );
 
@@ -83,10 +79,6 @@ function renderStatus(s) {
     w.push(['warn', 'Private DNS is on in Android settings, so DNS bypasses Unbound. Set it to Off.']);
   if (s.redirect_active && s.ipv6 === 'unsupported')
     w.push(['warn', 'This kernel cannot redirect IPv6 DNS, so IPv6 DNS servers are used directly.']);
-  if (s.running && s.selinux === 'fallback')
-    w.push(['warn', `Unbound could not start in its own SELinux domain, so it runs in the root manager's domain until the module restarts. Reason: ${s.selinux_note || 'unknown'}`]);
-  if (s.running && s.selinux_blocked > 0)
-    w.push(['warn', `SELinux blocked ${s.selinux_blocked === 1 ? 'one kind' : `${s.selinux_blocked} kinds`} of access by Unbound. If something does not work, run "ctl.sh selinux-report" and report it; "ctl.sh selinux off" runs Unbound as before.`]);
   if (s.blocked > 500000)
     w.push(['warn', `${nf.format(s.blocked)} blocked domains use a lot of memory (about ${Math.round(s.blocked * 0.4 / 1024)} MB). Consider fewer or smaller lists.`]);
   $('warnings').replaceChildren(...w.map(([k, m]) => el('p', { class: `notice ${k}` }, m)));

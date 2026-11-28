@@ -16,10 +16,6 @@ export UNBOUND_IF_INET6="$TMP/if_inet6" UNBOUND_CA_BUNDLE="$TMP/ca.pem"
 mkdir -p "$TMP/cg/v2" "$TMP/cg/acct"; : > "$TMP/cg/v2/cgroup.procs"; : > "$TMP/cg/acct/cgroup.procs"
 export UNBOUND_CGROUPS="$TMP/cg/v2 $TMP/cg/acct $TMP/cg/missing"
 export PATH="$TESTS_DIR/stubs:$PATH"
-# A stand-in for /sys/fs/selinux: "context" exists only while a test says
-# the module's policy is loaded.
-SEFS="$TMP/selinuxfs"
-export UNBOUND_SELINUXFS="$SEFS"
 mkdir -p "$STUB_STATE/www" "$STUB_STATE/settings" "$TMP/appdata/com.android.captiveportallogin"
 echo hostname > "$STUB_STATE/settings/private_dns_mode"
 echo dns.example.net > "$STUB_STATE/settings/private_dns_specifier"
@@ -168,8 +164,12 @@ assert_contains "local file applied" '"local-block.example."' "$(cat "$D/blockli
 assert_contains "local file in json" '"file":"mine.txt","count":1' "$(ctl lists)"
 
 # --- daemon: start, redirect, private DNS ----------------------------------------
+# Left by the SELinux test builds: cleaned up at start.
+mkdir -p "$D/log" "$D/run"
+: > "$D/log/selinux-denials.txt"; : > "$D/log/selinux-denials.txt.old"; echo enforcing > "$D/run/selinux"
 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
 wait_for 10 jump_present && pass || fail "redirect applied after start"
+assert_eq "SELinux test files removed" "" "$(ls "$D/log/selinux-denials.txt" "$D/log/selinux-denials.txt.old" "$D/run/selinux" 2>/dev/null)"
 rules="$(nat iptables UNBOUND_DNS)"
 assert_eq "first rule exempts unbound uid" "-m owner --uid-owner 3003 -j RETURN" "$(echo "$rules" | head -n 1)"
 assert_contains "network stack exempt" "--uid-owner 1073 -j RETURN" "$rules"
@@ -452,104 +452,6 @@ jump_absent && pass || fail "rules removed when module disabled"
 assert_eq "private dns restored" "hostname" "$(cat "$STUB_STATE/settings/private_dns_mode")"
 assert_eq "private dns spec restored" "dns.example.net" "$(cat "$STUB_STATE/settings/private_dns_specifier")"
 rm -f "$MOD/disable"
-
-# --- SELinux: Unbound in its own domain when the module's policy is loaded -------
-se_state() { ctl status | sed -n 's/.*"selinux":"\([a-z]*\)".*/\1/p'; }
-# Not loaded (another root manager, or before the reboot after installing).
-: > "$STUB_STATE/calls.log"
-UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
-wait_for 10 jump_present
-assert_eq "no policy: unconfined" "unconfined" "$(se_state)"
-grep -q '^runcon ' "$STUB_STATE/calls.log" && fail "runcon used without the policy" || pass
-ctl stop >/dev/null; wait_for 10 daemon_gone
-# Root can label files with types the policy lacks, so chcon working must
-# not count as the policy being loaded: only the kernel's context check does.
-touch "$STUB_STATE/selinux"
-UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
-wait_for 10 jump_present
-assert_eq "chcon alone is not the policy" "unconfined" "$(se_state)"
-ctl stop >/dev/null; wait_for 10 daemon_gone
-# Loaded: label the binary, then start it through runcon in unbound_dns.
-mkdir -p "$SEFS"; : > "$SEFS/context"; : > "$STUB_STATE/calls.log"
-UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
-wait_for 10 jump_present
-assert_eq "policy loaded: enforcing" "enforcing" "$(se_state)"
-assert_contains "binary labelled" "chcon u:object_r:unbound_dns_exec:s0 $MOD/bin/unbound" "$(cat "$STUB_STATE/calls.log")"
-# Written through another label first, so the kernel takes it afresh even
-# when the file already reads the same (BusyBox's chcon would skip it).
-assert_eq "binary relabelled, not skipped" \
-    "chcon u:object_r:system_file:s0 $MOD/bin/unbound
-chcon u:object_r:unbound_dns_exec:s0 $MOD/bin/unbound" \
-    "$(grep "^chcon .* $MOD/bin/unbound\$" "$STUB_STATE/calls.log")"
-assert_eq "folder relabelled, not skipped" \
-    "chcon -hR u:object_r:adb_data_file:s0 $D
-chcon -hR u:object_r:unbound_dns_data_file:s0 $D" \
-    "$(grep "^chcon -hR .* $D\$" "$STUB_STATE/calls.log")"
-assert_contains "started in its domain" "runcon -- u:r:unbound_dns:s0 $MOD/bin/unbound -d -c" "$(cat "$STUB_STATE/calls.log")"
-# The stub parses like BusyBox's runcon, which took Unbound's -d for its own
-# option when no "--" came first.
-assert_contains "BusyBox-style runcon needs --" "Usage: runcon" "$(runcon u:r:unbound_dns:s0 /bin/true -d 2>&1)"
-assert_contains "context checked with the kernel" "u:r:unbound_dns:s0" "$(cat "$SEFS/context")"
-# Its folder gets its own type, without following symbolic links.
-assert_contains "folder labelled" "chcon -hR u:object_r:unbound_dns_data_file:s0 $D" "$(cat "$STUB_STATE/calls.log")"
-[ -f "$D/selinux.labelled" ] && pass || fail "folder label not recorded"
-ctl stop >/dev/null; wait_for 10 daemon_gone
-# The policy is gone (another root manager): the folder gets back the label
-# all of /data/adb has.
-rm -f "$SEFS/context"; : > "$STUB_STATE/calls.log"
-UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
-wait_for 10 jump_present
-assert_eq "policy gone: unconfined" "unconfined" "$(se_state)"
-assert_contains "folder label restored" "chcon -hR u:object_r:adb_data_file:s0 $D" "$(cat "$STUB_STATE/calls.log")"
-[ ! -f "$D/selinux.labelled" ] && pass || fail "folder label still recorded"
-ctl stop >/dev/null; wait_for 10 daemon_gone
-: > "$SEFS/context"
-# The domain does not work: run Unbound the old way and say why.
-touch "$STUB_STATE/runcon.fail"
-UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
-wait_for 15 jump_present && pass || fail "unbound runs after falling back"
-assert_eq "fallback reported" "fallback" "$(se_state)"
-assert_contains "fallback logged" "selinux: Unbound could not start in its own domain" "$(cat "$D/log/module.log")"
-assert_contains "reason kept" "can't set up security context" "$(ctl selinux-report)"
-assert_contains "reason in status (WebUI warning)" '"selinux_note":"runcon: can'"'"'t set up security context' "$(ctl status)"
-ctl stop >/dev/null; wait_for 10 daemon_gone
-rm -f "$STUB_STATE/runcon.fail"
-# Turned off: Unbound runs in the manager's domain; turned on again: its own.
-UNBOUND_MAINT=600 sh "$MOD/ctl.sh" daemon >/dev/null 2>&1 &
-wait_for 10 jump_present
-assert_eq "domain in use" "enforcing" "$(se_state)"
-assert_contains "turn off" '"ok":true' "$(ctl selinux off)"
-se_is() { [ "$(se_state)" = "$1" ]; }
-wait_for 15 se_is off && pass || fail "selinux off: state $(se_state)"
-assert_eq "folder label back when off" "chcon -hR u:object_r:adb_data_file:s0 $D" "$(grep '^chcon' "$STUB_STATE/calls.log" | tail -n 1)"
-assert_contains "turn on" '"ok":true' "$(ctl selinux on)"
-wait_for 15 se_is enforcing && pass || fail "selinux on: state $(se_state)"
-assert_fails "selinux needs on|off" ctl selinux maybe
-ctl stop >/dev/null; wait_for 10 daemon_gone
-# Accesses logged for the domain are kept, each kind once, without pids.
-cat > "$STUB_STATE/dmesg.txt" <<'EOF'
-[   12.3] audit: type=1400 audit(1.2:3): avc:  denied  { read } for  pid=1234 comm="unbound" name="root.key" dev="dm-5" ino=42 scontext=u:r:unbound_dns:s0 tcontext=u:object_r:adb_data_file:s0 tclass=file permissive=1
-[   12.4] audit: type=1400 audit(1.2:4): avc:  denied  { read } for  pid=999 comm="unbound" name="root.key" dev="dm-5" ino=43 scontext=u:r:unbound_dns:s0 tcontext=u:object_r:adb_data_file:s0 tclass=file permissive=1
-[   12.5] audit: type=1400 audit(1.2:5): avc:  denied  { read } for  pid=5 comm="other" scontext=u:r:untrusted_app:s0 tcontext=u:object_r:system_file:s0 tclass=file permissive=0
-[   12.7] audit: type=1400 audit(1.2:6): avc:  denied  { use } for  pid=77 comm="netd" path="socket:[1]" dev="sockfs" ino=1 scontext=u:r:netd:s0 tcontext=u:r:unbound_dns:s0 tclass=fd permissive=0
-[   12.6] audit: audit_lost=3 audit_rate_limit=5 audit_backlog_limit=64
-[   13.0] audit: audit_lost=7 audit_rate_limit=5 audit_backlog_limit=64
-EOF
-printf '%s\n' '11-27 10:00:00.000  1234  1234 W unbound : type=1400 audit(0.0:7): avc:  denied  { name_bind } for  src=5335 scontext=u:r:unbound_dns:s0 tcontext=u:object_r:port:s0 tclass=udp_socket permissive=1' > "$STUB_STATE/logcat.txt"
-report="$(ctl selinux-report)"
-assert_eq "three kinds kept" "3" "$(printf '%s\n' "$report" | grep -c 'avc: denied')"
-assert_contains "other domains acting on Unbound kept" "scontext=u:r:netd:s0 tcontext=u:r:unbound_dns:s0 tclass=fd" "$report"
-assert_not_contains "pids dropped" "pid=" "$report"
-assert_contains "dropped audit messages shown" "dropped since boot (all apps): 7" "$report"
-assert_contains "socket kind kept" "{ name_bind }" "$report"
-assert_not_contains "other domains ignored" "untrusted_app" "$report"
-assert_eq "kept across reports" "3" "$(rm -f "$STUB_STATE/dmesg.txt"; ctl selinux-report | grep -c 'avc: denied')"
-# A new policy allows more: its list starts empty, the old one is kept aside.
-echo "# changed" >> "$MOD/sepolicy.rule"
-assert_eq "new policy, new list" "0" "$(rm -f "$STUB_STATE/logcat.txt"; ctl selinux-report | grep -c 'avc: denied')"
-assert_eq "old list kept" "3" "$(grep -c 'avc: denied' "$D/log/selinux-denials.txt.old")"
-assert_contains "diagnostics include them" "== SELinux" "$(ctl diag)"
-rm -f "$STUB_STATE/selinux" "$STUB_STATE/logcat.txt" "$SEFS/context"
 
 # --- rules removed by something else are put back ---------------------------------
 v6_jump_present() { grep -qx -- '-j UNBOUND_DNS' "$STUB_STATE/ip6tables/nat/OUTPUT" 2>/dev/null; }

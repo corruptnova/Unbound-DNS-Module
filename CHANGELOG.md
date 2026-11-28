@@ -10,23 +10,6 @@ these notes.
   M3 switches, radio rows, outlined fields, segmented log tabs, snackbars
   and a bottom bar for unsaved settings. Everything is still local; nothing
   is loaded from the internet.
-- SELinux: Unbound runs in its own enforcing SELinux domain
-  (`unbound_dns`, from the module's `sepolicy.rule`) instead of the root
-  manager's, which allows everything. The domain allows Unbound its binary,
-  its folder (which gets its own type, `unbound_dns_data_file`, rather than
-  the label all of `/data/adb` has), its sockets and the network, and
-  nothing else. The rules come from running Unbound in a permissive version
-  of the domain on a phone and logging every access through daily use,
-  reboots, list updates, settings changes and trust anchor updates.
-  - If Unbound cannot start in its domain, it starts in the manager's domain
-    as before, and the WebUI shows a warning with the reason.
-  - What the domain blocks is collected (`ctl.sh selinux-report`, also in
-    the diagnostics), and the WebUI says when there is something.
-  - `ctl.sh selinux off` runs Unbound in the manager's domain as before;
-    `selinux on` goes back.
-  - Without the policy (another root manager, or before the reboot after
-    installing) nothing changes. The WebUI shows the domain in the
-    statistics.
 - Fix: a blocklist update started from the WebUI ran inside the root
   manager app's cgroups, so Android killed or froze it along with the app;
   its lock then stayed, and once Android reused its process id for another
